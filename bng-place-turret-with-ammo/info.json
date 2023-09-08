@@ -1,0 +1,10 @@
+{
+  "name": "place-turret-with-ammo",
+  "version": "0.0.1",
+  "title": "Place Turrent with Ammon",
+  "author": "bng",
+  "homepage": "https://github.com/bengardner/factorio-mods",
+  "factorio_version": "1.1",
+  "dependencies": ["base >= 1.1"],
+  "description": "This mod adds 50 of your best ammo to a turret when manually placed."
+}
