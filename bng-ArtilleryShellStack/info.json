@@ -1,0 +1,8 @@
+{
+  "name": "bng-ArtilleryShellStack",
+  "version": "1.0.0",
+  "title": "BNG Artillery Shell Stack",
+  "author": "bng",
+  "description": "Change and allow to customize artillery shell stack size, default is now 20.",
+  "factorio_version": "1.1"
+}
