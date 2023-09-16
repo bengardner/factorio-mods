@@ -1,87 +1,110 @@
 # Golem Auto Helper
 
-This helps with early-game tasks by doing the following actions as the player
+This helps with early-game tasks by doing the following actions:
 
   * Remove excess coal from Burner Mining Drills (allows a pair of drills to produce coal)
   * Adds coal to Burner Mining Drills
   * Adds coal to Stone and Steel Furnaces
-  * Adds ores to Stone and Steel Furnaces
-  * Removes full output stacks from Furnaces
+  * Adds ores/input to Stone and Steel Furnaces
+  * Removes output from Furnaces
   * Tops off (adds) coal to Boilers, vehicles, etc (anything that burns coal)
-  * Adds missing inputs to assemblers
-  * Basic logistics
+  * Adds missing ingredients to assemblers
+  * Character logistics using inventory filter slots
+  * Moves items to/from storage chests (new entity)
+  * Provides a tower that does the same as the player
 
-The player (or golem) must be able to reach the entity for items to be exchanged.
-The items are removed from and added to the inventory of a player of golem.
+The player/tower must be able to reach the entity for items to be moved.
+That uses the 'reach_distance' field from the character.
+The items are removed from and added to the inventory of a player.
 
-## Golem
+## Transfer Tower
 
-A Golem is crafted from iron. It a humanoid figure that functions as a stand-in for the player.
+The Transfer Tower acts like the player.
+It has a larger radius (unless you changed the player reach).
+It is crafter from copper and iron and has inventory slots.
+(TODO) It uses uses electricity to transfer items.
 
-Actions that would transfer items to/from a player will go to a golem if the player isn't nearby or
-doesn't have the inventory space.
+A Transfer Tower is also treated like a storage chest.
 
-It has an iron-chest sized inventory.
+They do not coordinate, so a request under one tower cannot be satisfied by another tower.
+(REVISIT: may be able to set a filter in the Transfer Tower to request items from other
+transfer towers. But that tends to create a loop.)
 
-It pulls jobs from the job queue and walks to the entity and services the entity.
+## Chests
 
-It will push inventory to a player if the item count is below the player's configured level.
+There are three types of chests:
+  - storage
+  - provider
+  - requester
 
+These are smaller chests similar to their logistics counterparts.
+They can be crafted from an iron chest and some circuits, so they are cheaper that the real logistic chests.
 
-## Golem Provider Chest
-
-This is a chest that transfers all inventory to a nearby player or golem.
-Or rather, the player or golem will pull inventory from the chest, if possible.
-
-
-## Golem Storage Chest
-
-Excess inventory from the player or golem is dumped into Golem Storage Chests.
-A player or golem will grab needed items from Golem Storage Chest.
-Filters may be placed on slots to restrict what can go into the chest.
-
-In sufficient Storage chests may cause a golem to cease functioning.
-
-
-## Golem Request Chest
-
-A Golem Request Chest uses a filter to indicate that a slot should be filled with an item.
-A Golem will attempt to transfer items from inventory or storage to that container.
+(TODO: base off real logistic chests?)
 
 
-## Golem Poles
+### Provider Chest (based on "logistic-chest-passive-provider")
 
-A Golem Pole is a non-colliding indicator of where golems should operate.
-If there is a pole nearby, the golem will move towards the pole.
-If there are multiple poles, it will navigate between them all.
+This is a chest that requests that all inventory be removed once every 10 seconds.
+It is useful at the end of a mining belt.
+Items are moved by the player or tower.
 
-If there are no poles, then the golem will not wander, but stand in place after completing a job.
+
+### Storage Chest (based on "logistic-chest-storage")
+
+This is the general "storage" chest.
+Excess inventory from the player is dumped into Storage Chests.
+Request inventory is taken from Storage Chests.
+
+Insufficient Storage chests may cause a tower to cease functioning.
+
+Player inventory and a Tower are treated like a storage chest.
+
+When inserting items, a storage chest is selected based on a score.
+The score is the number of items that can be inserted plus a bonus.
+  - bonus +1 if the chest is empty
+  - bonus +2 if the chest already contains that item
+
+This tends to keep one item per storage chest, if there are sufficient chests.
+
+
+### Request Chest (based on "logistic-chest-requester")
+
+A Request Chest uses a filter to indicate that a slot should be filled with an item.
+This produces a request to transfer items to that container.
+
+Since the tower/player automatically fills assembler ingredients, there isn't much of
+a use for this. Perhaps it could be used to bridge two towers by putting a
+requester at the edge of one tower and use a belt/inserter to move inventory to a
+Storage chest in the zone of another tower.
 
 
 ## Entity Item Transfers
 
+Only coal is used as a fuel. Not wood or solid-fuel.
+
 Each entity that can be services is tracked.
 One entity per tick is examined for possible service needs.
 
-If an entity needs to be serviced, then it is added to a "job" queue.
-The job queue is consumed (and inventory moved) once per second by each actor (player or golem).
+If an entity needs to be serviced, then it sets NV field "request", "provide", and "priority".
 
-For furnaces, the status value is used to determine if the entity needs service.
+For generic refuel, if more than 1/2 a coal stack can be added, then a "request" entry is added.
+If the fuel item count < 3 the the priority is 3. Otherwise it is 2.
+The request is to top off the fuel.
+The same fuel type is requested if there is fuel present. (put in wood and it will keep filling with wood)
+If the fuel inventory slots are empty, then coal is requested.
 
-  * working : the entity does not need service
-  * no_fuel : coal is added (half-stack)
-  * no_ingredients : ore is added matching entity.previous_recipe
-  * full_output : output is moved to the player inventory, if the result won't exceed the stack limit
+Furnaces use the generic refuel routine.
+They also use the generic recipe routine if the input item count < 10.
+They add a remove-all request if the output count is > 10.
 
-For the mining drill, the coal level is maintained as follows:
 
-  * if less than 5, then a service is scheduled to add 10
-  * if full, then a service is scheduled to remove all but 10
+If a mining drill is NOT on coal ore, then it uses the generic refuel.
+If a mining drill is on coal, then the coal level is limited.
+If below 5, then enough is added to reach 6.
+If above 1/2 stack, then enough is removed to each 6.
 
-For the boiler and other fueled entities, the coal level is maintained as follows:
-
-  * if a slot has less than 1/2 stack of fuel, then add more of the same fuel type
-  * if a slot is empty then add 1 stack of coal
+For the boiler and other fueled entities, the generic refuel routine is used.
 
 For the assembler, a service is scheduled if status==item_ingredient_shortage.
 On service, inventory is added to the assembler to produce 2 recipes.
@@ -89,5 +112,7 @@ On service, inventory is added to the assembler to produce 2 recipes.
 
 ## Configuration
 
-  * Maximum number of stacks of coal in the player inventory (defaults to 5)
-  * Maximum number of stacks of furnace product (iron plate, copper plate, steel, or brick) (defaults to 5 each)
+Per-Player:
+  * Maximum number of stacks of coal in the player inventory (defaults to 5 non-filtered stacks)
+  * Maximum number of stacks of furnace product (iron plate, copper plate, steel, or brick) (defaults to 5 non-filtered stacks)
+  * Whether refueling is active

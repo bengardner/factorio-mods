@@ -1,0 +1,176 @@
+--[[
+This is lua. I want to use metatables/classes.
+But only data can be serialized to disk/other clients.
+This is a mock-up of how to handle that.
+
+The basic idea is that the "class" and "nv data" are tracked separately.
+The "nv data" is stored under "global", so it gets saved/restored and
+sent to clients.
+
+The "class" table will have the "nv data" as a value in the table.
+A minimal "nv data" would contain only the entity:
+	{ entity = entity }
+
+A minimal "class" table would contain only a reference to the nv data as "nv".
+	{ nv = nv_data }
+
+And, of course, it would have a metatable.
+Recommend "class" functions are:
+	destroy() - do any cleanup when the class instance is dropped (optional)
+	service() - periodic service function (if on service queue)
+
+The "class" file should register a handler. The handler takes the minimal
+"nv" data table. It can add fields, but cannot replace the table.
+
+	function handler(nv: table) => instance: table
+
+The nv table may either be new or contain data from a previous run (after load).
+The handler() has to handle both cases (new and restore).
+In either case, it creates the instance table, sets the metatable (optional)
+and returns the new instance.
+]]
+
+-- non-volatile data for the entity
+-- key=unit_number, val={ entity=entity, ... }
+global.entity_nv = {}
+
+-- volatile data that should not affect operation (IE, data+metatable)
+-- key=unit_nyumber, val="class" for the data
+local entity_inst_cache = {}
+
+-- create and add a NV entry, should only be called via M.entity_add(entity)
+-- make local?
+function M.entity_nv_create(entity)
+  local nv = {
+    entity = entity
+  }
+  global.entity_nv[entity.unit_number] = nv
+  return nv
+end
+
+-- get the nv item for the unit_number
+-- make local?
+function M.entity_nv_get(unit_number)
+  return global.entity_nv[unit_number]
+end
+
+-- remove the nv item for the unit_number
+-- make local?
+function M.entity_nv_del(unit_number)
+  global.entity_nv[unit_number] = nil
+end
+
+
+--[[ get the "class" instance for an entity
+The class instance may not exist due to a recent load.
+]]
+function M.entity_get(entity)
+  local unit_number = entity.unit_number
+  local inst = entity_inst_cache[unit_number]
+  if inst ~= nil then
+    return inst
+  end
+
+  -- don't have the instance in the cache -- might have just loaded
+  local nv = M.entity_nv_get(unit_number)
+  if nv == nil then
+    -- not tracking this unit; must be a stale reference
+    return nil
+  end
+
+  -- look up the handler for the entity
+  local handler = Globals.get_handler(entity)
+  if handler == nil then
+    -- We recorded the entity, but don't handle it anymore. Remove it.
+    clog("discard %s @ (%s,%s)", entity.name, entity.position.x, entity.position.y)
+    M.entity_nv_del(unit_number)
+    return nil
+  end
+
+  -- the handler creates the instance. plan on setting inst.nv = nv.
+  -- save a copy for the next call
+  inst = handler(nv)
+  entity_inst_cache[unit_number] = inst
+
+  return inst
+end
+
+-- add a new entity that was just created
+function M.entity_add(entity)
+  local handler = Globals.get_handler(entity)
+  if handler ~= nil then
+    local inst = handler(M.entity_nv_create(entity))
+    entity_inst_cache[entity.unit_number] = inst
+    return inst
+  end
+end
+
+-- Remove/forget an entity. Call destructor if defined.
+function M.entity_remove(unit_number)
+  -- remove link to nv data
+  M.entity_nv_del(unit_number)
+  -- grab the instance so we can call the destroy() function
+  local inst = entity_inst_cache[unit_number]
+  if inst ~= nil then
+    -- remove from cache
+    entity_inst_cache[unit_number] = nil
+    -- call destructor
+    if type(inst.destroy) == "function" then
+      inst:destroy()
+    end
+  end
+end
+
+local handler_match_list = {}
+
+local match_fcn_table = {
+	["name"] = function (entity, arg)
+			return entity.name == arg
+		end,
+	["type"] = function (entity, arg)
+			return entity.type == arg
+		end,
+	["fuel"] = function (entity, arg)
+			return entity.get_fuel_inventory() ~= nil
+		end,
+	["ammo"] = function (entity, arg)
+			return entity.get_ammo_inventory() ~= nil
+		end,
+}
+
+--[[
+Register a handler function.
+	@match_type is a string (or function) that picks a match function.
+		built-in strings types:
+			"name" matches entity.name. @match_arg is a name or list of names.
+			"type" matches entity.type. @match_arg is a type name or list of type names.
+			"fuel" matches if entity has a fuel inventory. @match_arg is not used.
+			"ammo" matches if entity has an ammo inventory. @match_arg is not used.
+		function prototype:
+			function matcher(entity, match_arg) -> boolean
+
+	@match_arg is passed to the matcher function
+
+	@handler_func prototype:
+		function handler(entity) -> function
+]]
+function M.register_handler(match_type, match_arg, handler_func)
+	local match_fcn
+	if type(match_type) == "string" then
+		match_fcn = match_fcn_table[match_type]
+	elseif type(match_type) == "function" then
+		match_fcn = match_type
+	end
+	if match_fcn ~= nil then
+		table.insert(handler_match_list, { fcn=match_fcn, arg=match_arg, handler=handler_func })
+	end
+end
+
+-- get the first matching handler
+function M.get_handler(entity)
+	for _, mm in ipairs(handler_match_list) do
+		if mm.fcn(entity, mm.arg) == true then
+			return mm.handler
+		end
+	end
+end

@@ -46,7 +46,7 @@ local fuel_list = {
   "wood"
 }
 
-function M.update_refuel(entity, info)
+function M.update_refuel(entity)
   local priority = 0 -- don't add
   local request = {}
 
@@ -89,24 +89,19 @@ end
   We only do something when the state is not working.
 ]]
 function M.scan_furnace(entity, info)
-  -- don't do anything if the furnace is working
-  if entity.status == defines.entity_status.working then
-    Jobs.cancel_job(entity.unit_number)
-    return
-  end
+  local inv_src = entity.get_inventory(defines.inventory.furnace_source)
+  local inv_out = entity.get_output_inventory()
+  local inv_fuel = entity.get_fuel_inventory()
 
-  -- refuel (take from player or golem)
-  if entity.status == defines.entity_status.no_fuel then
+  if inv_fuel ~= nil and inv_fuel.get_item_count() < 10 then
     M.update_refuel(entity)
   end
 
-  -- add ingredients if empty (take from player or golem)
-  if entity.status == defines.entity_status.no_ingredients then
-    M.update_recipe_inv(entity, entity.get_inventory(defines.inventory.furnace_source), entity.previous_recipe, 5)
+  if inv_src ~= nil and inv_src.get_item_count() < 10 then
+    M.update_recipe_inv(entity, entity.get_inventory(defines.inventory.furnace_source), entity.previous_recipe, 50)
   end
 
-  -- move all output to a player/golem
-  if entity.status == defines.entity_status.full_output then
+  if inv_out ~= nil and inv_out.get_item_count() > 10 then
     M.update_remove_all(entity, entity.get_output_inventory())
   end
 
@@ -160,15 +155,16 @@ end
 
 -- add or clear a job every 10 seconds
 function M.scan_container_provider(entity, info)
-  -- check every 10 seconds
+  -- we have to have inventory for 10 seconds
+  local inv = entity.get_output_inventory()
+  if inv == nil or inv.is_empty() then
+    info.tick_provider = game.tick
+  end
   local elapsed = game.tick - (info.tick_provider or 0)
   if elapsed > (10 * 60) then
-    info.tick_provider = game.tick
-
-    M.update_remove_all(entity, entity.get_output_inventory())
-
-    Jobs.cancel_old_job(entity.unit_number)
+      M.update_remove_all(entity, entity.get_output_inventory())
   end
+  Jobs.cancel_old_job(entity.unit_number)
 end
 
 -- request to fill each filtered slot
@@ -228,19 +224,36 @@ If a fuel stack is empty, try to find something that works.
 coal, wood, solid fuel (coal for now)
 ]]
 function M.scan_refuel(entity, info)
-  M.update_refuel(entity, info)
+  M.update_refuel(entity)
 
   Jobs.cancel_old_job(entity.unit_number)
 end
 
 -------------------------------------------------------------------------------
 
-Globals.register_handler("type", "furnace", M.scan_furnace)
-Globals.register_handler("type", "assembling-machine", M.scan_assembler)
-Globals.register_handler("name", shared.chest_names.requester, M.scan_container_requester)
-Globals.register_handler("name", shared.chest_names.provider, M.scan_container_provider)
-Globals.register_handler("name", shared.chest_names.storage, M.scan_container_storage)
-Globals.register_handler("name", "burner-mining-drill", M.scan_burner_mining_drill)
-Globals.register_handler("fuel", "", M.scan_refuel)
+local function simple_handler(scan_fcn)
+  return function (entity)
+    if entity.name == shared.chest_names.storage then
+      Globals.storage_add(entity)
+    end
+    return {
+      entity = entity,
+      service = function (inst)
+        scan_fcn(entity, inst)
+      end,
+      destroy = function (inst)
+        Globals.storage_del(entity)
+      end,
+    }
+  end
+end
+
+Globals.register_handler("type", "furnace", simple_handler(M.scan_furnace))
+Globals.register_handler("type", "assembling-machine", simple_handler(M.scan_assembler))
+Globals.register_handler("name", shared.chest_names.requester, simple_handler(M.scan_container_requester))
+Globals.register_handler("name", shared.chest_names.provider, simple_handler(M.scan_container_provider))
+Globals.register_handler("name", shared.chest_names.storage, simple_handler(M.scan_container_storage))
+Globals.register_handler("name", "burner-mining-drill", simple_handler(M.scan_burner_mining_drill))
+Globals.register_handler("fuel", "", simple_handler(M.scan_refuel))
 
 return M

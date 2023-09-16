@@ -5,10 +5,11 @@
   "author": "bng",
   "contact": "",
   "homepage": "https://mods.factorio.com/mod/bng-iron-golem",
-  "description": "Adds mining drones and depots providing great yet cusomisable balance: robust drones recipe ingredients instead of pure iron, normal pollution rate, electric energy usage, and much more.\nEverything is configurable, many mods supported, check out mod Homepage  or startup and map settings ^_^\nLocales: English, Deutsch, Español, Français, Türkçe, Український, Русский, 中国人",
+  "description": "Early-game automatic servicing of boilers, stone-furnaces and burner mining drills.",
 
   "factorio_version": "1.1",
   "dependencies": [
-    "base >= 1.1.0"
+    "base >= 1.1.0",
+    "stdlib"
   ]
 }

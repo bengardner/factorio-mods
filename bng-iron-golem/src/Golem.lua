@@ -37,7 +37,7 @@ end
 
 function Golem:say(text)
   if not (self.entity and self.entity.valid) then return end
-  clog("%s[%s]: %s", self.name, self.unit_number, text)
+  --clog("%s[%s]: %s", self.name, self.unit_number, text)
   self.entity.surface.create_entity{name="flying-text", position=self.entity.position, text=text}
 end
 
@@ -137,14 +137,15 @@ function Golem:tick()
 
   --clog("golem job e=%s a=%s", empty_stacks, serpent.line(avail))
 
+  -- FIXME: this somehow returned a bad job
   local job = Jobs.request_a_job(
     g_entity.position,
     reach,
     empty_stacks,
     avail)
 
-  if job ~= nil then
-    clog("golem found job %s", serpent.line(job))
+  if job ~= nil and job.entity.valid then
+    --clog("golem found job %s", serpent.line(job))
 
     EntityHandlers.service_entity(job.entity.unit_number, g_entity, g_inv, storage)
     self.tick_action = game.tick
@@ -162,7 +163,7 @@ function Golem:tick()
 end
 
 function Golem:CommandComplete(event)
-  clog("%s[%s] command complete result=%s distracted=%s", self.name, self.unit_number, event.result, event.was_distracted)
+  --clog("%s[%s] command complete result=%s distracted=%s", self.name, self.unit_number, event.result, event.was_distracted)
   -- add a stop/wait until the next service period
   self:ai_wait(120)
 end
@@ -255,7 +256,7 @@ local function on_ai_command_completed(event)
   end
 end
 
-Event.register(defines.events.on_ai_command_completed, on_ai_command_completed)
+--Event.register(defines.events.on_ai_command_completed, on_ai_command_completed)
 
 Globals.register_metaclass("Golem", { __index = Golem })
 

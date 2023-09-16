@@ -1,0 +1,491 @@
+Create an Iron golem type character.
+Look at the robot miner for an example of how to move around a character.
+
+Base it off of a character with a color theme. Shrunk down by 1/2 maybe.
+
+Has an anchor point and radius. Will try to not leave that area.
+
+It will operate independently.
+	- Has an inventory. Maybe 10 slots.
+	- Picks up stuff from golem provider/storage chests.
+	- Drops stuff into golem storage/requestor chests.
+	- mines resources (coal, iron, copper, rock, tree). - random based on closest resource
+	- puts coal in empty burner miner (implicit requestor)
+	- puts coal in empty burner drill (implicit requestor)
+	- requires fuel??
+x	- can manufacture items? (set request for circuit boards, will collect copper plate, create wire, etc)
+
+Golemn remote can be used to force it to move to a location.
+
+provider -> storage
+provider -> requestor
+storage -> requestor
+
+Requestor items:
+	- any 'burner' -> supply coal
+	- any 'turret' -> supply ammo
+	- any golem "requestor" chest
+
+Provider:
+
+GUI shows
+	- status: state, action, and target (updated every few ticks)
+	- entity preview
+	- inventory (can take/give directly)
+	- job (dropdown)
+
+jobs:
+  - transfer (no control over which chests are used)
+  - mine (closest resource)
+  - defend (respond to alert, enemy presence : give it a gun)
+
+range:
+  - won't move to an object further than a certain range
+  - contributes to it being "stupid'
+
+states:
+  - IDLE
+  - PICKUP
+  - DROPOFF
+  - MINE
+  - GUARD
+  - FIGHT
+
+Logic kicks off at 1/2 Hz. (max one golemn per tick)
+
+
+IDLE state:
+ JOB Transfer (greedy)
+	- If inventory is less than half full
+		find nearest pickup box with something in it.
+		if found, set state=PICKUP, set target to chest and go to that location
+	- If inventory is not empty
+		find nearest dropoff box that accepts something in the inventory
+		if found, set state=dropoff, set target to chest and go to that location
+	- random wander ?
+
+ JOB MINE
+	- if the inventory is not full
+		- if a resource is nearby, then goto the resource and mine
+		- usually already stand close enough to a resource
+	- if the invenroty is full
+		- find nearest golem box, deposit inventory
+	- otherwise, do nothing (alert icon? golem idle)
+
+PICKUP state:
+ - if target entity is not set or not valid, then set state=IDLE
+ - if not "close enough" then move towards the entity. done.
+ - if "close enough" to the entity, then transfer all inventory, set state=IDLE
+
+DROPOFF state:
+ - if target entity is not set or not valid, then set state=IDLE
+ - if not "close enough" then move towards the entity. done.
+ - if "close enough" to the entity, then transfer all inventory, set state=IDLE
+
+Golem Provider Chest
+ - golems always grab stuff from here, never deposit
+ - used as a furnace/assembler output
+
+Golem Request Chest
+ - golems try to satisfy requests, bringing items
+ - will remove excess
+ - used as furnace/assembler inputs
+
+Golem Storage Chest
+ - drops excess inventory without a requestor here
+
+
+Golem chest:
+	- one row of requests
+
+pickup chest priority:
+	- golems pick up excess items in a chest (> request value, which defaults to 0)
+
+dropoff chest:
+	- find a chest with matching request that is not satisfied (current + en-route < request amount)
+
+"transfer" behavior:
+	- look for an in-range Gchest that has an unsatisfied request that
+		can be satisfied by another in-range Gchest.
+	- go to the source, pick up inventory, deliver
+
+
+Steps:
+	1. Examine robot miner mod, find out how to create an animated entity.
+		a. get it to move around, decide reach, whether it can walk through things, etc.
+	2. create 3 chests (provider, storage, requester)
+		provider - normal "iron chest"
+		storage - normal "iron chest"
+		requester - "iron chest" with logistics mode set
+		* need to handle the "copy" operation, etc, to preserve the requests (for free?)
+	3. add logic to handle pickup/dropoff on the 3 chest types
+		* simple state machine (IDLE, MINE, PICKUP, DROPOFF)
+
+
+Revamp simple:
+	- check one entity per tick
+		- put on "idle", "low" "med" or "high" job queue based on status
+			- (boiler) out of fuel => "high"
+			- (boiler) less than half fuel => "med"
+			- (other refuel) out of fuel => "med"
+			- (other refuel) less than half fuel => "low"
+			- (assembler, furnace) out of ingredients => med
+			- (furnace) out of ingredients => med
+			- (furnace) more than half-stack of output => "low"
+			- default => idle
+	- don't use extra reach mod to guage how it works.
+	- service one entity per 30 ticks (configurable)
+
+entities (check): (one entity per tick, constant order)
+	- assembler (includes chem plant)
+		- if status==full_output then add to "idle" queue
+		- if status==no_ingredients, then add to "med" queue
+		- else add to "idle" queue
+	- furnace
+		- if status==full_output or no_fuel or no_ingredients, then add to "med" queue
+		- if fuel < 1/2 stack, add to "low" queue
+		- if ingredients < 1/2 stack, add to "low" queue
+		- if output > 1/2 stack, add to "low" queue
+		- else add to "idle" queue
+	- refuel (train, car, tank, heli)
+		- if no_fuel then add to high queue
+		- if fuel < 1/2 stack, then add to "med" queue
+	- boiler (need to take into account fuel feed from inserter)
+		- if no_fuel then add to high queue
+		- else idle queue
+	- provider chest
+		- if not empty, then add to "low" queue
+		- if contains more than 1 stack, then add to "med" queue
+	- requester chest
+		- if filtered item type is empty, then add to "med"
+		- if filtered item type < 1/2 filter stacks, then add to "low"
+
+When adding to a queue, specify the items that need to be removed and added.
+When updating the entry,
+job queue entry:
+
+low_jobs[unit_number] = { entity, remove[name] = count, insert[name] = count }
+med_jobs[unit_number] = { entity, remove[name] = count, insert[name] = count }
+high_jobs[unit_number] = { entity, remove[name] = count, insert[name] = count }
+
+-- job queues contain only the unit number
+M.job_queues = { low_queue, med_queue, high_queue }
+M.job_maps = { low_jobs, med_jobs, high_jobs }
+M.job_claims = {} -- key=unum or entity, val=golem entity
+
+function job_add(priority, unit_number, entry)
+	-- clear from other maps (don't clear from queues)
+	for pri = 1, #job_maps do
+		if pri ~= priority then
+			M.job_maps[pri][unit_number] = nil
+		end
+	end
+	local jm = M.job_maps[priority]
+	local jq = M.job_queues[priority]
+
+	if jm[unit_number] == nil then
+		queue_push(jq, unit_number)
+	end
+	entry.priority = priority
+	jm[unit_number] = entry
+end
+
+function job_del(unit_number)
+	for pri = 1, #job_maps do
+		M.job_maps[pri][unit_number] = nil
+	end
+end
+
+function job_claim_set(unit_number, golem)
+	M.job_claims[unit_number] = golem
+end
+
+function job_claim_get(unit_number)
+	return M.job_claims[unit_number]
+end
+
+function job_claim_del(unit_number)
+	M.job_claims[unit_number] = nil
+end
+
+-- get a list of unclaimed jobs that are within range at the priority level
+function job_get(priority, position, range)
+	local jobs = {}
+	for unum, entry in pairs(M.job_maps[priority] or {}) do
+		if entry.entity.valid and not job_claimed(unum) and in_range(position, entry.entity.position, range) then
+			table.insert(jobs, entry)
+		end
+	end
+	return jobs
+end
+
+entities (service):
+	- assembler (includes chem plant)
+		- top off empty ingredients (anything below recipe)
+			- use a multiplier so that there are 10 seconds worth of ingredients
+		- do NOT remove results
+	- furnace
+		- refuel (see below)
+		- add ingredients, limit to 1 stack per transfer
+		- remove results
+	- refuel - add up to 1 stack of fuel
+		- top off fuel stack with same fuel
+		- if empty, use best fuel: solid, coal, wood
+	- miner drill
+		- if on coal resource:
+			add 2 fuel if 0, remove all above 5
+		- else
+			top off fuel (max)
+	- provider chest
+		- remove all content
+	- requester chest
+		- fill all requester slots with the filtered item
+
+Player job selection.
+	- every 10 ticks check each player.
+		if it has been less than 30 ticks since the last job, then done
+		if the player is moving, then done
+		check high/med/low queues (in order) for the first entity that
+		is reachable.
+		If found, then remove it from the queue and service that entity.
+		record the player job_tick
+	- if short items
+		- search nearby (in range) storage chests for items
+			- remove from storage and insert into target
+
+Golem job selection / logic
+	- every 10 ticks check each golem.
+		if it has been less than 30 ticks since the last job, then done
+		if the golem has a command (moving to a job), then done
+		check high/med/low queues (in order) for the first entity that
+		is reachable.
+		If found, then chest if it can be satisfied:
+			- check inventory for ability to service the request (empty space for remove, items for restock)
+			- scan nearby storage chests for the needed items OR space if short
+			remove it from the queue and "claim" it.
+		If the entity is within reach, then service it.
+		Otherwise, navigate to the entity position, using the reach as
+		the "close enough" value. When arrived, service the entity.
+		record the golem job_tick at time of service.
+		If nothing found, then double the "temporary reach" to some max value.
+		If idle for 10 seconds AND has excess inventory, then dump to storage chest(s).
+		If idle for 30 seconds, then find a nearby golem pole that
+		hasn't been visited and move towards it.
+
+Golem inventory:
+	- 5 stacks of coal
+	- 5 stacks of each ore (furnace)
+	- 1 stack of everything else
+
+Future Golem activities:
+	- Provider chest
+		- if items are available, add to
+	- If fuel (coal) level is below 3 stacks, then grab some from a provider or storage chest.
+	- If fuel level is above 4 stacks, then d
+
+Golem jobs:
+	- pickup inventory
+		- find storage chest with available items
+		- move to chest
+		- transfer items
+	- dump inventory
+		- find chest with available space
+		- move to chest
+		- transfer items
+	- move to position within range
+
+Service provider chest:
+	- if golem can hold all inventory, then goto chest, transfer items
+	- if golem cannot hold all inventory, then dump
+
+golem = {
+	entity = entity,
+	reach_dist = 20, -- how far the golem can reach
+	sight_dist = 60, -- how far the golem can see
+	job_tick = tick, -- tick when did something (walk or service)
+	job_target = nil | { ... },
+}
+
+When scanning for jobs, it goes from high to low priority looking for
+a job within reach_dist.
+If not found, it scans the jobs again using sight_dist.
+
+
+
+-- next steps
+1. create the item and entity.
+2. have the entity walk between provider chests.
+
+
+The golem idea was kinda lame.
+-------
+
+Going with a "transfer tower" instead. Need to update GFX. going with
+a 'substation' with a tint.
+Shows an electric beam when transferring a stack.
+
+Using request and storage logistic chests with reduced capacity.
+request works as expected. (add only)
+storage can have a filter, which is respected.
+the tower will try to store same-type items in a storage chest.
+chest recipes are reduced to steel+green circuit (no red)
+
+Item Movement:
+  storage/player -> furnace (fuel, ore)
+  storage/player -> burner mining drill (fuel)
+ XX storage/player -> assembler (ingredients) use request chest
+  storage/player -> boiler (fuel)
+  storage/player -> other (car, train) (fuel)
+  storage -> requester chest
+
+  burner mining drill (if on coal) -> storage chest (excess coal)
+  furnace (output) -> storage chest
+
+  burner minig drill (coal) -> player (max 10 stacks)
+  furnace (output) -> player (max 5 stacks plates, steel)
+
+
+Tower Limits:
+ 1. up to 1 stack transferred per service.
+ 2. each tower can do one transfers per second.
+ 3. Limited range - maybe 20 or 30 ?
+
+Player Limits:
+ 1. up to 1 item type transfer per service (can move multiple stacks)
+ 2. each player can do two transfers per second
+ 3. range matches the 'reach' of the player
+
+
+Entities are scanned one per tick.
+They update their status and add themselves to a "need service" queue,
+which is maintained on each tower. An entity can be on the queue once.
+Adds itself to *all* towers in range.
+
+The queue is consumed one entry at a time.
+Job entries have 'request' and 'provide' tables, with key=item and val=count to move.
+The job info is stored in the nv data for the entity.
+
+
+
+Tower class members:
+	- service_queue    : Queue of unum
+	- service_entities : key=unum, val=entity
+	- storage_entities : key=unum, val=entity
+
+storage_entites is updated on create and after a storage chest is added/removed.
+global storage_tick is set to game.tick whenever a storage chest is added or removed. also at load().
+If the tower storage_tick doesn't equal the global, then a scan is done for storage chests
+at the start of serivce().
+(assuming the C++ scan is faster than tracking and checking positions.)
+
+storage_chest class (nv)
+{
+  entity = entity,
+
+  -- cached at the last scan for quick how many do I have?
+  is_empty = bool,
+  is_full = bool,
+  contents = {},
+}
+
+transfer_tower class (nv)
+{
+  -- the building entity
+  entity = entity,
+
+  need_scan = false,
+  area = {} -- area that the tower covers (x1,y1,x2,y2)
+  service_queue = Queue, -- of unum
+  service_queue_unum = {} -- key=unum, val=true
+  service_entities = {}, -- key=unum, val=entity (anything that can be serviced)
+  storage_entities = {}, -- key=unum, val=entity (storage)
+}
+common_entity metamethods :
+{
+	-- called from other entities
+	need_service(entity, bool) -- adds unum to the service queue (if in service_entities?)
+
+	-- periodic processing
+	service()           -- (periodic) does the stuff
+		-- calls service_scan() before moving stuff to make sure request/provide/priority are accurate
+}
+
+common_entity class (nv):
+{
+  -- the building entity
+  entity = entity,
+
+  -- what the entity currently wants to get or remove (optional)
+  priority = 0, -- current priority level
+  request = {}, -- key=item, val=count
+  provide = {}, -- key=item, val=count
+
+  -- towers that cover this entity - to notify of service need
+  -- these are NV because the list shouldn't change unless the map changes
+  -- the table is cleaned up upon notification if the entity is not valid
+  towers_entities = {}, -- key=unum, val=entity
+}
+common_entity metamethods :
+{
+	service_scan()      -- updates `request`, `provide` and `priority` fields
+	                    -- called from service(), but also called by tower.
+	notify_towers(bool) -- iterates over the towers and calls need_service(unum, bool) on each
+	service()           -- (periodic) calls service_scan() and then notify_towers()
+}
+
+When a tower is placed, it scans entities in its coverage area and
+registers itself with all the classes and records the service and storage
+entities.
+When a handled entity is placed, then all towers are checked to see if
+there might be overlap. If there is, then tower.need_scan=true and
+the tower will do another find_entities_with_filter() on next service.
+
+
+When processing a tower, it marches through the service_queue trying each
+entity.
+	- If an entity is invalid it is dropped from the queue and removed from service_entities.
+	- if an entity doesn't need service, it is removed from the queue.
+	- If an entity needs service, then a matching storage chest is located and the transfer is done.
+	- The entity is moved to the back of the queue.
+
+For removing from storage, the best chest is determined based on a score:
+	- the score is based on how many items can be provided
+
+For moving to storage, the best chest is determined based on how many
+items will fit with a bonus:
+	- has a filter for that item (+3)
+	- has non-zero of that item (+2)
+	- is_empty (+1)
+
+
+
+
+2023.09.16 ----
+
+Fully adopt logistics stuff.
+
+requester: (create small entity)
+	- can request items (creates request job)
+	- storage_remove = true  : used as a source for servicing entities
+	- storage_insert = false : will not put stuff in there
+
+buffer : basically same as requester, but has a flag to mark it as a buffer
+	- can request items (creates request job)
+	- storage_remove = true  : used as a source for servicing entities
+		- but NOT from a requester that has 'entity.request_from_buffers = false'
+	- storage_insert = false : will not put stuff in there
+
+storage => (create small entity) general dumping ground for items
+	- no jobs created
+	- filter prevents adding items
+	- storage_remove = true : used as a source for servicing entities
+	- storage_insert = true : will not put stuff in there
+
+passive-provider => (create small entity) can take, but not add
+	- storage_remove = true  : used as a source for servicing entities
+	- storage_insert = false : will not put stuff in there
+
+active-provider =>
+ 	- creates priority 1 "provide" for stuff after 10 seconds
+	- storage_remove = true  : used as a source for servicing entities
+	- storage_insert = false : will not put stuff in there

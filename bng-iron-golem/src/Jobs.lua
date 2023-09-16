@@ -26,6 +26,9 @@ M.entities = {}
 -- map: key=unit_number, val=game.tick
 M.claims = {}
 
+global.job_list = M.job_list
+global.job_entities = M.job_entities
+
 local function priority_bound(priority)
   return math.min(#M.job_list, math.max(1, priority))
 end
@@ -212,6 +215,10 @@ function M.request_a_job(position, range, inv_free_slots, inv_contents)
       end
     end
   end
+end
+
+function M.print()
+  clog("M.job_list=%s", serpent.block(M.job_list))
 end
 
 return M

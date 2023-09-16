@@ -1,0 +1,35 @@
+
+
+
+The golem should not be interrupted when doing a 'go-to' operation.
+Keep track of the target chest and keep trying to go there until it vanishes or get get there.
+
+The golem should pick up stuff from storage chests that are requested somewhere.
+ - 1 stack of whatever is available.
+ - 5 stacks of coal to hand out
+
+dump excess inventory in storage chests.
+
+maybe jobs to keep track of "hot" items?
+
+Refresh the golem GUI when inventory changes.
+Search through all the UIs and trigger a refresh if a GUI is open for that golem.
+Call a refresh on all GolemUIs that are open.
+
+
+Also update the "status" for the golem'
+  - waiting
+  - traveling
+
+
+!! getting stuck on a provider chest.
+   - go back to creating a job every 10 seconds at most.
+
+
+REWORK based on gameplay....
+
+ - golem has NO inventory.
+ - moves from storage to entity that needs it
+ - moves from provider to storage
+ - moves from output to storage
+ - requester chest uses filter to request a stack
