@@ -1,3 +1,4 @@
+--[[
 local shared = require "shared"
 local M = {}
 
@@ -14,3 +15,4 @@ function M.add_network_chest_as_pastable_target_for_assemblers()
 end
 
 M.main()
+]]

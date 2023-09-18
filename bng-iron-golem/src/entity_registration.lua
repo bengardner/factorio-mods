@@ -21,10 +21,11 @@ function M.on_entity_add(event)
   end
 
   -- entity_add checks for a handler and creates the instance
-  local inst = Globals.entity_add(entity)
-  if inst ~= nil then
-    clog("Added %s @ (%s,%s)", entity.name, entity.position.x, entity.position.y)
-  end
+  --local inst =
+  Globals.entity_add(entity)
+  --if inst ~= nil then
+  --  clog("Added %s @ (%s,%s)", entity.name, entity.position.x, entity.position.y)
+  --end
 end
 
 --- handles all events that remove an entity

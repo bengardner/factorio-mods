@@ -341,7 +341,8 @@ function M.create(nv)
     nv.logistic_mode = entity.prototype.logistic_mode
     Globals.storage_add(self)
   end
-  clog("ServicedEntity: Created %s [%s] @ %s mode=%s", entity.name, self.nv.unit_number, serpent.line(entity.position), nv.logistic_mode)
+
+  --clog("ServicedEntity: Created %s [%s] @ %s mode=%s", entity.name, self.nv.unit_number, serpent.line(entity.position), nv.logistic_mode)
 
   return self
 end
@@ -356,12 +357,8 @@ end
 
 Globals.register_handler("type", "furnace", common_create(ServicedEntity.scan_furnace))
 Globals.register_handler("type", "assembling-machine", common_create(ServicedEntity.scan_assembler))
---Globals.register_handler("name", shared.chest_names.requester, common_create(ServicedEntity.scan_container_requester))
---Globals.register_handler("name", shared.chest_names.provider, common_create(ServicedEntity.scan_container_provider))
 Globals.register_handler("name", "burner-mining-drill", common_create(ServicedEntity.scan_burner_mining_drill))
 Globals.register_handler("fuel", "", common_create(ServicedEntity.scan_refuel))
---Globals.register_handler("name", shared.chest_name_requester, common_create(ServicedEntity.scan_container_requester_log))
---Globals.register_handler("name", shared.chest_name_provider, common_create(ServicedEntity.scan_container_provider))
 Globals.register_handler("logistic-mode", "requester", common_create(ServicedEntity.scan_container_requester))
 Globals.register_handler("logistic-mode", "buffer", common_create(ServicedEntity.scan_container_requester))
 Globals.register_handler("logistic-mode", "passive-provider", common_create(ServicedEntity.scan_container_passive_provider))

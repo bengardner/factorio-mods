@@ -187,17 +187,39 @@ function M.service_entity(job, actor, inv, storage)
   inst.service(inst)
 end
 
--- return if we can take items from this chest
-local function storage_can_take_from(inst, request_from_buffers)
+--===========================================================================--
+
+--[[
+return if we can take items from this chest
+
+Rules:
+ - any non-logistic entity can take from a logicistic chest
+ - only two logistic requesters: requester and buffer
+ - anyone can take from storage
+ -
+]]
+local function storage_can_take_from(inst, request_from_buffers, logistic_mode)
+  -- if the requester is not logistic, then we are OK
+  if logistic_mode == "none" then
+    return true
+  end
+
   local mode = inst.nv.logistic_mode
-  if mode == "requester" then
-    return false
+
+  if logistic_mode == "requester" then
+    -- a requester cannot take from another requester
+    if mode ~= "requester" then
+      return false
+    end
+    -- a requester cannot take from a buffer unless enabled
+    if mode == "buffer" and not request_from_buffers then
+      return false
+    end
+    return true
   end
-  if mode == "buffer" and not request_from_buffers then
-    return false
-  end
-  -- covers active-provider, passive-provider, storage, and buffer+request_from_buffers, transfer tower
-  return true
+
+  -- buffers can take from anything except buffers and requesters
+  return (mode ~= "buffer" and mode ~= "requester")
 end
 
 -- return if we can add unrequested items to this storage entity (storage+tower only)
@@ -254,14 +276,16 @@ end
 Find the best storage chest that has the items.
 score is based on the number of items available.
 returns chest, count
+
+@logistic_mode is the logistic mode of the taker.
 ]]
-function M.find_chest_items(storage_ents, name, count, request_from_buffers)
+function M.find_chest_items(taker_unum, storage_ents, name, count, request_from_buffers, logistic_mode)
   local best_chest
   local best_count = 0
 
   for unum, _ in pairs(storage_ents) do
     local inst = Globals.entity_get(unum)
-    if inst ~= nil and storage_can_take_from(inst, request_from_buffers) then
+    if inst ~= nil and inst.nv.unit_number ~= taker_unum and storage_can_take_from(inst, request_from_buffers, logistic_mode) then
       local inv = inst.nv.entity.get_output_inventory()
       local n_avail = inv.get_item_count(name)
       if n_avail > 0 then
@@ -334,7 +358,7 @@ function M.find_best_job(service_ents, storage_ents, skip_service)
         local request = inst.nv.request
         if request ~= nil and next(request) ~= nil then
           for name, count in pairs(request) do
-            local chest, n_avail = M.find_chest_items(storage_ents, name, count, request_from_buffers)
+            local chest, n_avail = M.find_chest_items(inst.nv.unit_number, storage_ents, name, count, request_from_buffers, inst.nv.logistic_mode or "none")
             if chest ~= nil then
               best_pri = inst.nv.priority
               best_inst = inst
@@ -362,75 +386,6 @@ function M.find_best_job(service_ents, storage_ents, skip_service)
 end
 
 --[[
-PLAN: (not implemented)
-  There are 6 possible item movements:
-   - move items from job.chest to job.inst (count > 0)  : src=job.chest.nv.entity, dst=job.inst.nv.entity
-   - move items from job.instl to job.chest (count < 0) : src=job.inst.nv.entity, dst=job.chest.nv.entity
-   - move items from mid_entity to job.inst (job.chest = nil, count > 0) : src=mid_entity, dst=job.inst.nv.entity
-   - move items from job.inst to mid_entity (job.chest = nil, count < 0) : src=job.inst.nv.entity, dst=mid_entity
-   - move items from mid_entity to job.chest (job.inst = nil, count > 0) : src=mid_entity, dst=job.chest.nv.entity
-   - move items from job.chest to mid_entity (job.inst = nil, count < 0) : src=job.chest.nv.entity, dst=mid_entity
-
-returns
-  { src_entity=LuaEntity, dst_entity=LuaEntity, name=string, count=integer }
-]]
-function M.find_best_job2(service_ents, storage_ents, mid_entity, mid_inv, mid_limits)
-  local best_pri = 0
-  local best_inst
-  local best_name
-  local best_count
-  local best_chest
-
-  --[[
-  Check each serive entity.
-  If we can move items to/from a storage chest to satisfy a request, then do that.
-  ]]
-
-  for unum, _ in pairs(service_ents) do
-    local inst = Globals.entity_get(unum)
-    if inst ~= nil and (inst.nv.priority or 0) > best_pri then
-      clog(" -- check %s[%s] pri=%s req=%s pro=%s", inst.nv.entity_name, inst.nv.unit_number, inst.nv.priority,
-        serpent.line(inst.nv.request), serpent.line(inst.nv.provide))
-
-      local provide = inst.nv.provide
-      if provide ~= nil and next(provide) ~= nil then
-        for name, count in pairs(provide) do
-          local chest, n_free = M.find_chest_space(storage_ents, name, count)
-          if chest ~= nil then
-            best_pri = inst.nv.priority
-            best_inst = inst
-            best_chest = chest
-            best_name = name
-            best_count = -n_free
-            break
-          end
-        end
-      end
-
-      if inst.nv.priority > best_pri then
-        local request = inst.nv.request
-        if request ~= nil and next(request) ~= nil then
-          for name, count in pairs(request) do
-            local chest, n_avail = M.find_chest_items(storage_ents, name, count)
-            if chest ~= nil then
-              best_pri = inst.nv.priority
-              best_inst = inst
-              best_chest = chest
-              best_name = name
-              best_count = n_avail
-            end
-          end
-        end
-      end
-    end
-  end
-
-  if best_chest ~= nil then
-    return { pri=best_pri, inst=best_inst, chest=best_chest, name=best_name, count=best_count }
-  end
-end
-
---[[
 Transfers @count items from @src_entity in @src_inv via @mid_entity to @dst_entity in @dst_inv.
 ]]
 function M.transfer_items(src_entity, mid_entity, dst_entity, name, count)
@@ -439,10 +394,23 @@ function M.transfer_items(src_entity, mid_entity, dst_entity, name, count)
     return
   end
 
-  --local n_can_add = dst_entity.
-
-  -- pull items from src_entity
-  local n_trans = src_entity.remove_item( { name=name, count=count } )
+  -- try to grab from the trash first, if there is a trash inventory
+  local n_trans = 0
+  if src_entity.type == "character" then
+    local tinv = src_entity.get_inventory(defines.inventory.character_trash)
+    if tinv ~= nil then
+      n_trans = tinv.remove( { name=name, count=count } )
+    end
+  elseif src_entity.type == "spider-vehicle" then
+    local tinv = src_entity.get_inventory(defines.inventory.spider_trunk)
+    if tinv ~= nil then
+      n_trans = tinv.remove( { name=name, count=count } )
+    end
+  end
+  -- auto-pull items from src_entity if there wasn't trash
+  if n_trans == 0 then
+    n_trans = src_entity.remove_item( { name=name, count=count } )
+  end
   if n_trans == 0 then
     clog("!! transfer: failed to remove %s %s from %s[%s]", name, count, src_entity.name, src_entity.unit_number)
     return
@@ -466,13 +434,13 @@ function M.transfer_items(src_entity, mid_entity, dst_entity, name, count)
     return
   end
 
---[[
-  clog("TRANSFER %s (%s) from %s[%s] to %s[%s] via %s[%s]",
-    name, n_added,
-    src_entity.name, src_entity.unit_number,
-    dst_entity.name, dst_entity.unit_number,
-    mid_entity.name, mid_entity.unit_number)
-]]
+  if false then
+    clog("TRANSFER %s (%s) from %s[%s] to %s[%s] via %s[%s]",
+      name, n_added,
+      src_entity.name, src_entity.unit_number,
+      dst_entity.name, dst_entity.unit_number,
+      mid_entity.name, mid_entity.unit_number)
+  end
 
   -- show beam from src_entity to mid_entity if not the same.
   if src_entity.unit_number ~= mid_entity.unit_number then
