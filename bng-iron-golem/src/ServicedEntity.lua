@@ -105,16 +105,9 @@ function ServicedEntity:update_refuel()
   if inv ~= nil then
     -- if empty, request coal
     if inv.is_empty() then
-      self.nv.priority = 2
+      self:up_priority(2)
       self.nv.request[fuel_name] = #inv * prot.stack_size
       return
-    end
-
-    -- priority is based on how much fuel we have
-    if inv.get_item_count() < 3 then
-      self.nv.priority = 2
-    else
-      self.nv.priority = 1
     end
 
     -- try to top off the fuel(s)
@@ -125,6 +118,11 @@ function ServicedEntity:update_refuel()
         -- start requesting when fuel is below 1/2 stack
         if n_need > fuel_prot.stack_size / 2 then
           self.nv.request[fuel] = n_need
+          if n_need > fuel_prot.stack_size - 3 then
+            self:up_priority(2)
+          else
+            self:up_priority(1)
+          end
         end
       end
     end
@@ -215,52 +213,13 @@ function ServicedEntity:scan_container_active_provider()
   end
 end
 
---[[
-Passive provider allow items to be taken, but not added.
-No requests.
-]]
-function ServicedEntity:scan_container_passive_provider()
-  -- don't do anything
-end
-
--- request to fill each filtered slot
-function ServicedEntity:scan_container_requester_old()
-  local entity = self.nv.entity
-  local request = self.nv.request
-
-  local inv = entity.get_output_inventory()
-  if inv ~= nil then
-    local contents = inv.get_contents()
-    local wanted = {}
-
-    for idx = 1, #inv do
-      local name = inv.get_filter(idx)
-      if name ~= nil then
-        local prot = game.item_prototypes[name]
-        if prot ~= nil then
-          wanted[name] = (wanted[name] or 0) + prot.stack_size
-        end
-      end
-    end
-
-    for name, n_wanted in pairs(wanted) do
-      local n_have = contents[name] or 0
-      if n_have < n_wanted then
-        request[name] = (request[name] or 0) + (n_wanted - n_have)
-        self.nv.priority = 2
-      end
-    end
-  end
-end
-
--- logistic requester
+-- logistic requester/buffer, create a request for missing items
 function ServicedEntity:scan_container_requester()
   local entity = self.nv.entity
   local request = self.nv.request
 
   if entity.request_slot_count > 0 then
     local inv = entity.get_output_inventory()
-    self.nv.priority = 1
     for idx = 1, entity.request_slot_count do
       local req = entity.get_request_slot(idx)
       if req ~= nil then
@@ -270,33 +229,15 @@ function ServicedEntity:scan_container_requester()
         if n_trans > 0 then
           --clog("%s[%s] has req for %s(%s), n_free=%s", entity.name, entity.unit_number, req.name, req.count, n_free)
           request[req.name] = n_trans
+          self.nv.priority = 1
         end
       end
     end
   end
 end
 
-
-function ServicedEntity:scan_container_storage()
-  local entity = self.nv.entity
-  local request = self.nv.request
-
-  if entity.request_slot_count > 0 then
-    local inv = entity.get_output_inventory()
-    self.nv.priority = 1
-    for idx = 1, entity.request_slot_count do
-      local req = entity.get_request_slot(idx)
-      if req ~= nil then
-        local n_have = inv.get_item_count(req.name)
-        local n_free = inv.get_insertable_count(req.name)
-        local n_trans = math.min(n_free, req.count - n_have)
-        if n_trans > 0 then
-          --clog("%s[%s] has req for %s(%s), n_free=%s", entity.name, entity.unit_number, req.name, req.count, n_free)
-          request[req.name] = n_trans
-        end
-      end
-    end
-  end
+function ServicedEntity:scan_nothing()
+  -- don't do anything
 end
 
 -------------------------------------------------------------------------------
@@ -310,14 +251,20 @@ function ServicedEntity:scan_assembler()
   end
 end
 
---[[
-Top off the fuel.
-If a fuel stack is empty, try to find something that works.
-coal, wood, solid fuel (coal for now)
-]]
 function ServicedEntity:scan_refuel()
   self:update_refuel()
 end
+
+function ServicedEntity:get_priority()
+  return self.nv.priority or 0
+end
+
+function ServicedEntity:up_priority(pri)
+  if pri > self:get_priority() then
+    self.nv.priority = pri
+  end
+end
+
 
 -------------------------------------------------------------------------------
 -- this is the ServicedEntity factory
@@ -359,10 +306,11 @@ Globals.register_handler("type", "furnace", common_create(ServicedEntity.scan_fu
 Globals.register_handler("type", "assembling-machine", common_create(ServicedEntity.scan_assembler))
 Globals.register_handler("name", "burner-mining-drill", common_create(ServicedEntity.scan_burner_mining_drill))
 Globals.register_handler("fuel", "", common_create(ServicedEntity.scan_refuel))
+
 Globals.register_handler("logistic-mode", "requester", common_create(ServicedEntity.scan_container_requester))
 Globals.register_handler("logistic-mode", "buffer", common_create(ServicedEntity.scan_container_requester))
-Globals.register_handler("logistic-mode", "passive-provider", common_create(ServicedEntity.scan_container_passive_provider))
 Globals.register_handler("logistic-mode", "active-provider", common_create(ServicedEntity.scan_container_active_provider))
-Globals.register_handler("logistic-mode", "storage", common_create(ServicedEntity.scan_container_storage))
+Globals.register_handler("logistic-mode", "passive-provider", common_create(ServicedEntity.scan_nothing))
+Globals.register_handler("logistic-mode", "storage", common_create(ServicedEntity.scan_nothing))
 
 return M

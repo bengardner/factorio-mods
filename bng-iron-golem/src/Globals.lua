@@ -24,10 +24,12 @@ Each entity can be part of zero or more transfer tower networks.
 local Queue = require "src.Queue"
 local shared = require('shared')
 local clog = require("src.log_console").log
+local Event = require('__stdlib__/stdlib/event/event')
 
 local M = {}
 
 local setup_has_run = false
+local need_scan = false
 
 function M.setup()
   if setup_has_run then
@@ -70,10 +72,12 @@ function M.inner_setup()
   M.scan_prototypes()
   M.restore_metatables()
 
-  -- FIXME: during testing I reset the queues at startup
-  clog("TEST: rescanning entities")
-  M.debug_entity_scan()
-  M.debug_reset_queues()
+  if need_scan then
+    -- FIXME: during testing I reset the queues at startup
+    clog("TEST: rescanning entities")
+    M.debug_entity_scan()
+    M.debug_reset_queues()
+  end
 end
 
 M.entity_inst_table = {}
@@ -98,12 +102,6 @@ local function IsValid(item)
   return item ~= nil and type(item.IsValid) == "function" and item:IsValid()
 end
 
-local replace_chests = {
-  [shared.chest_names.requester] = shared.chest_name_requester,
-  [shared.chest_names.provider] = shared.chest_name_provider,
-  [shared.chest_names.storage] = shared.chest_name_storage,
-}
-
 -- DEBUG: re-scan the surfaces for entities that we track
 function M.debug_entity_scan()
   -- scan for storage chests
@@ -114,12 +112,6 @@ function M.debug_entity_scan()
     local entities = surface.find_entities_filtered( { name=M.get_entity_names() } )
     for _, entity in ipairs(entities) do
       clog("%s[%s] @ (%s,%s)", entity.name, entity.unit_number, entity.position.x, entity.position.y)
-      if shared.chest_names[entity.name] ~= nil then
-
-      end
-      --if entity.name == shared.chest_names.requester then
-      --  local ent = entity.surface.create{ name=shared.chest_name_requester, position=entity.position, fast_replace=true }
-      --end
       M.entity_add(entity)
     end
   end
@@ -392,55 +384,6 @@ function M.service_queue_push(unit_number)
 end
 
 -------------------------------------------------------------------------------
--- TrnasferTower data
-
--- get a TransferTower instance, validate it and destroy if bad. return if good.
-function M.tower_get(unit_number)
-  if unit_number ~= nil then
-    return global.mod.towers[unit_number]
-  end
-end
-
-function M.tower_del(unit_number)
-  if unit_number ~= nil then
-    global.mod.towers[unit_number] = nil
-  end
-end
-
--- called only from TransferTower
-function M.tower_add(tower)
-  if IsValid(tower) then
-    global.mod.towers[tower.nv.unit_number] = tower
-  end
-end
-
-function M.tower_get_map()
-  return global.mod.towers
-end
-
--------------------------------------------------------------------------------
-
--- return a list of storage chest entities in range
-function M.find_storage_chests(surface, position, radius)
--- be lazy for now and use the surface scan
-local ents = surface.find_entities_filtered{
-    position = position,
-    radius = radius,
-    name = shared.storage_chest_name,
-  }
-  return ents
-end
-
--- returns all in-range storage chests in a table with key=unit_number, val=entity
-function M.find_storage_chests2(surface, position, radius)
-  local chests = {}
-  for _, st_ent in ipairs(M.find_storage_chests(surface, position, radius)) do
-    chests[st_ent.unit_number] = st_ent
-  end
-  return chests
-end
-
--------------------------------------------------------------------------------
 -- Player data
 
 -- Grabs a persistent table for a player. Never returns nil.
@@ -522,16 +465,8 @@ end
 -------------------------------------------------------------------------------
 
 function M.scan_prototypes()
-  -- add our stuff
-  --M.add_entity_name_type(shared.chest_names.provider, false, false)
-  --M.add_entity_name_type(shared.chest_names.requester, false, false)
-  --M.add_entity_name_type(shared.chest_names.storage, false, true)
 
-  --M.add_entity_name_type(shared.chest_name_provider, false, false)
-  --M.add_entity_name_type(shared.chest_name_requester, false, false)
-  --M.add_entity_name_type(shared.chest_name_storage, false, true)
-
-  M.add_entity_name_type(shared.transfer_tower_name, false, true)
+  M.add_entity_name_type(shared.transfer_tower_name, false, false)
 
   -- add refuel targets (coal/chemical only) and assemblers
   for _, prot in pairs(game.entity_prototypes) do
@@ -545,6 +480,7 @@ function M.scan_prototypes()
         elseif prot.type == "logistic-container" then
           M.add_entity_name_type(prot.name, false, true)
         end
+        -- REVISIT: should electric-furnace be included? I think not.
       end
     end
   end
@@ -552,5 +488,17 @@ function M.scan_prototypes()
   -- debug: show entities that we track
   clog("%s: entity_name_list: %s", shared.mod_name, serpent.block(entity_name_list))
 end
+
+-- forget about the player when removed
+Event.on_event(
+  defines.events.on_player_removed,
+  function (event)
+    global.player_info[event.player_index] = nil
+  end
+)
+
+Event.on_configuration_changed(function ()
+  need_scan = true
+end)
 
 return M

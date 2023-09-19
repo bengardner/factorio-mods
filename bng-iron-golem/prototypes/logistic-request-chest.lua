@@ -1,5 +1,5 @@
 --[[
-Game plan:
+Create "small" versions of the logistic chests that require "electronic-circuit" instead of :
 duplicate logistic chests.
  - Active Provider : pushes all inv out to a player/golem/storage chest on each service
  - Storage : golem will use this to satisfy requests
@@ -11,12 +11,15 @@ local shared = require "shared"
 
 local M = {}
 
-local function add_chest(name, override_item_name, inventory_size)
+local function add_chest(logistic_name, inventory_size)
+  local override_item_name = 'logistic-chest-' .. logistic_name
   local override_prototype = "logistic-container"
+  local name = override_item_name .. '-small'
 
   local entity = table.deepcopy(data.raw[override_prototype][override_item_name])
   entity.name = name
   entity.minable.result = name
+  entity.next_upgrade = override_item_name
   --entity.picture.layers[1].filename = Paths.graphics .. "/entities/network-chest-steel.png"
   --entity.picture.layers[1].hr_version.filename = Paths.graphics .. "/entities/hr-network-chest-steel.png"
   --entity.picture.layers[1].hr_version.height = 80
@@ -24,7 +27,9 @@ local function add_chest(name, override_item_name, inventory_size)
   --entity.icon = Paths.graphics .. "/icons/network-chest-steel.png"
   -- smaller than an iron chest
   entity.inventory_size = inventory_size
-  entity.render_not_in_network_icon = false
+  --entity.render_not_in_network_icon = false
+
+  -- TODO: replace graphics with 'iron-chest' w/ colors
 
   local item = table.deepcopy(data.raw["item"][override_item_name])
   item.name = name
@@ -38,8 +43,8 @@ local function add_chest(name, override_item_name, inventory_size)
     energy_required = 0.5,
     ingredients = {
       { "iron-chest", 1 },
-      { "electronic-circuit", 2 }
-    }, -- iron chest + 2x circuit board
+      { "electronic-circuit", 3 }
+    },
     result = name,
     result_count = 1,
   }
@@ -48,9 +53,11 @@ local function add_chest(name, override_item_name, inventory_size)
 end
 
 function M.main()
-  add_chest(shared.chest_name_provider, "logistic-chest-passive-provider", 19)
-  add_chest(shared.chest_name_requester, "logistic-chest-buffer", 19)
-  add_chest(shared.chest_name_storage, "logistic-chest-storage", 19)
+  add_chest("active-provider", 19)
+  add_chest("passive-provider", 19)
+  add_chest("requester", 19)
+  add_chest("buffer", 19)
+  add_chest("storage", 19)
 end
 
 M.main()

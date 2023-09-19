@@ -16,10 +16,14 @@ end
 function M.player_scan(entity)
   local storage_ents = {}
   local service_ents = {}
+  local reach = entity.reach_distance
+
+  reach = 10
 
   local ents = entity.surface.find_entities_filtered({
     position=entity.position,
-    radius=entity.reach_distance,
+
+    radius=reach,
     name=Globals.get_entity_names()
   })
 
@@ -58,10 +62,6 @@ Restrictions:
     - inst : (optional) the instance involved (to re-run service afterwards)
 ]]
 function M.player_find_job(entity, pinfo, service_ents, storage_ents)
-  local best_pri = 0
-  local best_inst
-  local best_name
-  local best_count
 
   -- scan player inv to determine min and max values for each item
   local pinv = entity.get_main_inventory()
@@ -70,6 +70,7 @@ function M.player_find_job(entity, pinfo, service_ents, storage_ents)
   end
   local contents = pinv.get_contents()
 
+  -- FIXME: this next bit should be done elsewhere
   -- if the force doesn't have character logistics, then enabled it (should be done elsewhere?)
   if not entity.force.character_logistic_requests then
     entity.force.character_logistic_requests = true
@@ -78,13 +79,17 @@ function M.player_find_job(entity, pinfo, service_ents, storage_ents)
     entity.force.character_trash_slot_count = 10
   end
 
-  -- handle trash first
+  -- find building-based logsitic network (can't use my own!)
+  local net = entity.surface.find_logistic_network_by_position(entity.position, entity.force)
+
+  -- handle trash first (char => storage)
   local trash_inv = entity.get_inventory(defines.inventory.character_trash)
-  if trash_inv ~= nil then
+  if trash_inv ~= nil and not trash_inv.is_empty() then
+    --clog("player_find_job: net=%s trash=%s", net, serpent.block(trash_inv.get_contents()))
     for name, count in pairs(trash_inv.get_contents()) do
-      local chest, n_free = EntityHandlers.find_chest_space(storage_ents, name, count)
-      if chest ~= nil then
-        return { pri=3, src=entity, dst=chest.nv.entity, chest=chest, name=name, count=n_free }
+      local inst, n_trans = EntityHandlers.find_item_takers(entity, entity, net, name, count, service_ents, storage_ents)
+      if inst ~= nil then
+        return { src=entity, dst=inst.nv.entity, dst_inst=inst, name=name, count=n_trans }
       end
     end
   end
@@ -108,7 +113,7 @@ function M.player_find_job(entity, pinfo, service_ents, storage_ents)
   if pinfo.allow_resupply == true then
     pinfo.allow_resupply = false
 
-    -- check logistic maximums
+    -- check logistic maximums (char => trash)
     if trash_inv ~= nil then
       for name, n_max in pairs(item_max) do
         local n_have = contents[name] or 0
@@ -122,15 +127,16 @@ function M.player_find_job(entity, pinfo, service_ents, storage_ents)
       end
     end
 
-    -- check logistic minimums
+    -- check logistic minimums (storage => char)
     for name, n_want in pairs(item_min) do
       local n_have = contents[name] or 0
       if n_want > n_have then
         local n_trans = math.min(n_want - n_have, pinv.get_insertable_count(name))
         if n_trans > 0 then
-          local chest, n_avail = EntityHandlers.find_chest_items(entity.unit_number, storage_ents, name, n_trans, "none")
-          if chest ~= nil then
-            return { pri=3, dst=entity, src=chest.nv.entity, chest=chest, name=name, count=n_avail }
+          --clog("player_find_job: log want %s (%s)", name, n_trans)
+          local inst, n_avail = EntityHandlers.find_chest_items3(entity, entity, net, name, n_trans, storage_ents, true)
+          if inst ~= nil then
+            return { dst=entity, src=inst.nv.entity, src_inst=inst, name=name, count=n_avail }
           end
         end
       end
@@ -138,60 +144,60 @@ function M.player_find_job(entity, pinfo, service_ents, storage_ents)
   end
   pinfo.allow_resupply = true
 
-  -- do a more-or-less regular scan, with limits
+  -- scan entities using player inventory and storage
   for unum, _ in pairs(service_ents) do
     local inst = Globals.entity_get(unum)
     local noskip = (pinfo.handled_unums[unum] ~= true)
 
-    if inst ~= nil and noskip and (inst.nv.priority or 0) > best_pri then
+    if inst ~= nil and noskip and (inst.nv.priority or 0) > 0 then
+      --clog("player_find_job: %s[%s] pri=%s provides=%s request=%s", inst.nv.entity_name, inst.nv.unit_number,
+      --  inst.nv.priority, serpent.line(inst.nv.provide), serpent.line(inst.nv.request))
 
-      local provide = inst.nv.provide
-      if provide ~= nil and next(provide) ~= nil then
-        for name, count in pairs(provide) do
-          -- get min of physical limits and available items
-          count = math.min(count, pinv.get_insertable_count(name))
-          -- cap at the max space available
-          local n_max = item_max[name]
-          if n_max ~= nil then
-            count = math.min(n_max - (contents[name] or 0), count)
+      -- check provides (entity => char)
+      for name, count in pairs(inst.nv.provide or {}) do
+        -- get min of physical limits and available items
+        local n_trans = math.min(count, pinv.get_insertable_count(name))
+        -- cap at the max space available
+        local n_max = item_max[name]
+        if n_max ~= nil then
+          n_trans = math.min(n_max - (contents[name] or 0), n_trans)
+        end
+        if n_trans > 0 then
+          return { src=inst.nv.entity, src_inst=inst, dst=entity, name=name, count=n_trans }
+        end
+
+        -- see if someone else can take the item
+        local dst_inst, dst_count = EntityHandlers.find_item_takers(inst.nv.entity, entity, net, name, count, service_ents, storage_ents)
+        if dst_inst ~= nil then
+          return { src=inst.nv.entity, src_inst=inst, dst=dst_inst.nv.entity, dst_inst=dst_inst, name=name, count=dst_count }
+        end
+      end
+
+      -- check requests (char => entity)
+      local request = inst.nv.request
+      if request ~= nil and next(request) ~= nil then
+        for name, count in pairs(request) do
+          --clog("See request for %s (%s) from %s [%s] - i have %s", name, count, inst.nv.entity_name, inst.nv.unit_number, contents[name])
+          -- cap the count based on the number available
+          local n_trans = math.min(count, (contents[name] or 0) - (item_min[name] or 0))
+          if n_trans > 0 then
+            -- move items from char to entity
+            return { src=entity, dst=inst.nv.entity, dst_inst=inst, name=name, count=n_trans }
           end
-          --clog(" - max_accept %s %s, count=%s ss=%s", name, n_max_accept, count, prot.stack_size)
-          if count > 0 then
-            best_pri = inst.nv.priority
-            best_inst = inst
-            best_name = name
-            best_count = -count
-            break
+
+
+          -- try to grab from somewhere else (entity to entity, skip me)
+          local chest, n_avail = EntityHandlers.find_chest_items3(entity, entity, net, name, count, storage_ents, false)
+          --clog("player_find_job: %s[%s] request %s (%s) => %s %s", inst.nv.entity_name, inst.nv.unit_number, name, count, serpent.line(chest), n_avail)
+          if chest ~= nil and inst.nv.unit_number ~= chest.nv.unit_number then
+            return { src=chest.nv.entity, src_inst=chest, dst=inst.nv.entity, dst_inst=inst, name=name, count=n_avail }
           end
         end
       end
 
-      if inst.nv.priority > best_pri then
-        local request = inst.nv.request
-        if request ~= nil and next(request) ~= nil then
-          for name, count in pairs(request) do
-            --clog("See request for %s (%s) from %s [%s] - i have %s", name, count, inst.nv.entity_name, inst.nv.unit_number, contents[name])
-            -- cap the count based on the number available
-            count = math.min(count, (contents[name] or 0) - (item_min[name] or 0))
-            if count > 0 then
-              best_pri = inst.nv.priority
-              best_inst = inst
-              best_name = name
-              best_count = count
-            end
-          end
-        end
-      end
+      -- checked it an could do nothing, so punt
+      pinfo.handled_unums[unum] = true
     end
-  end
-
-  if best_inst ~= nil then
-    if best_count < 0 then
-      -- player providing items
-      return { pri=best_pri, dst=entity, src=best_inst.nv.entity, inst=best_inst, name=best_name, count=-best_count }
-    end
-    -- player taking items
-    return { pri=best_pri, src=entity, dst=best_inst.nv.entity, inst=best_inst, name=best_name, count=best_count }
   end
 end
 
@@ -237,21 +243,7 @@ function M.service(player, info)
   local storage_ents, service_ents = M.player_scan(entity)
 
   -- toggle whether we check personal or entity services first
-  local job
-  if info.swap_order == true then
-    job = EntityHandlers.find_best_job(service_ents, storage_ents, info.handled_unums)
-    if job == nil then
-      job = M.player_find_job(entity, info, service_ents, storage_ents)
-    end
-    info.swap_order = false
-  else
-    job = M.player_find_job(entity, info, service_ents, storage_ents)
-    if job == nil then
-      job = EntityHandlers.find_best_job(service_ents, storage_ents, info.handled_unums)
-    end
-    info.swap_order = true
-  end
-
+  local job = M.player_find_job(entity, info, service_ents, storage_ents)
   if job == nil then
     -- clear the list of handled entities
     info.handled_unums = {}
@@ -261,10 +253,13 @@ function M.service(player, info)
   EntityHandlers.transfer_items(job.src, entity, job.dst, job.name, job.count)
 
   -- refresh the entity status
-  if job.inst ~= nil then
-    info.handled_unums[job.inst.nv.unit_number] = true
-    job.inst:service(true)
+  local function call_service(inst)
+    if inst ~= nil and type(inst.service) == "function" then
+      inst:service(true)
+    end
   end
+  call_service(job.src_inst)
+  call_service(job.dst_inst)
 end
 
 return M

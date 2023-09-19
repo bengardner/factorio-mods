@@ -27,9 +27,8 @@ If there was something else to clean up, we'd do it now.
 ]]
 function TransferTower:destroy()
   if self.nv.entity ~= nil then
+    -- clear entity to mark destroy() as complete
     self.nv.entity = nil
-    -- remove myself from the tower list (is that used?)
-    Globals.tower_del(self.nv.unit_number)
   end
 end
 
@@ -77,13 +76,78 @@ function TransferTower:scan()
   self.tick_scan = game.tick
 end
 
---[[
-This is called periodically (evert 30 ticks?)
-It should drive the AI.
 
-  - find a job
-  - do the job
-  - wander between Golem Poles
+--[[
+This finds a job that transfers between a storage chest and a service entity.
+@entity is either a "character" or "roboport" (tower).
+@service_ents and @storage_ents are tables with key=unit_number and val=(dont't care)
+@service_ents contains the in-range entities that could be serviced.
+@storage_ents contains the in-range storage chest entities.
+
+returns a table with the following:
+  - src : source entity
+  - dst : destination entity
+  - name : name of item
+  - count : count to transfer
+  - chest : the chest involved
+  - inst : the instance involved (to re-run inst:service(true) after the transfer)
+]]
+--@field entity LuaEntity @ Tower
+--@field service_ents table @ Entities that need service, key=unit_number, val=true
+--@field done_unums table @ Entities that have been serviced, key=unit_number, val=true
+function TransferTower:find_job()
+  local entity = self.nv.entity
+  local handled_unums = self.nv.handled_unums
+
+  local net = entity.logistic_network
+  if net == nil then
+    return nil
+  end
+
+  for unum, _ in pairs(self.nv.service_entities) do
+    local inst = Globals.entity_get(unum)
+
+    if inst ~= nil and (handled_unums[unum] ~= true) and (inst.nv.priority or 0) > 0 then
+      for name, count in pairs(inst.nv.provide or {}) do
+        local chest, n_free = EntityHandlers.find_chest_space2(inst.nv.entity, entity, net, name, count)
+        if chest ~= nil then
+          return { src=inst.nv.entity, src_inst=inst, dst=chest.nv.entity, dst_inst=chest, name=name, count=n_free }
+        end
+      end
+
+      --[[
+        A requester cannot request from another requester.
+        A requester may request from a buffer if request_from_buffers is set.
+        A buffer may NOT request from a requester or another buffer.
+      ]]
+      for name, count in pairs(inst.nv.request or {}) do
+        local dst_ent = inst.nv.entity
+        -- logistic chests generally cannot pull from requester
+        local request_from_buffers = true
+        if dst_ent.type == "logistic-container" then
+          -- two types: 'buffer' and 'requester'. 'requester' can pull from 'buffer' if enabled, buffers can't.
+          request_from_buffers = false
+          if dst_ent.prototype.logistic_mode == "requester" and dst_ent.request_from_buffers then
+            request_from_buffers = true
+          end
+        end
+
+        local chest, n_avail = EntityHandlers.find_chest_items2(dst_ent, entity, net, name, count, request_from_buffers)
+        if chest ~= nil then
+          return { src=chest.nv.entity, src_inst=chest, dst=inst.nv.entity, dst_inst=inst, name=name, count=n_avail }
+        end
+      end
+
+      handled_unums[unum] = true
+    end
+  end
+  -- make the linter happy
+  return nil
+end
+
+--[[
+This is called periodically.
+It transfers items within the logistic network.
 ]]
 function TransferTower:service()
   -- don't process more than 1 Hz
@@ -92,6 +156,18 @@ function TransferTower:service()
     return
   end
   self.tick_service = game.tick
+
+  --[[ Make sure we have enough energy.
+    Energy starts around 10,000,000
+      Full charge is about 100,000,000
+    So, a mim of 20 Mj seems OK. Usage of 5 Mj might be a bit much, but we'll see.
+  ]]
+  local entity = self.nv.entity
+  if entity.energy < shared.transfer_tower_power_min then
+    --clog("[%s]TransferTower[%s]: energy=%s LOW POWER",
+    --  game.tick, self.nv.unit_number, entity.energy)
+    return
+  end
 
   -- re-scan if storage was added/removed since last scan
   if (self.tick_scan or 0) <= Globals.storage_get_tick() then
@@ -102,28 +178,31 @@ function TransferTower:service()
     self:scan()
   end
   self:purge_invalid()
---[[
-  clog("[%s]TransferTower[%s]: storage=%s ents=%s", game.tick, self.nv.unit_number,
-    serpent.line(self.nv.storage_entities),
-    serpent.line(self.nv.service_entities))
-]]
-  local job = EntityHandlers.find_best_job(self.nv.service_entities, self.nv.storage_entities, self.nv.handled_unums)
+
+  --local prot = entity.prototype
+  --clog("[%s]TransferTower[%s]: energy=%s usage=%s max=%s",
+  --  game.tick, self.nv.unit_number, entity.energy, prot.energy_usage, prot.max_energy_usage)
+
+  local job = self:find_job()
   if job == nil then
     self.nv.handled_unums = {}
     return
   end
 
   EntityHandlers.transfer_items(job.src, self.nv.entity, job.dst, job.name, job.count)
+  entity.energy = entity.energy - shared.transfer_tower_power_usage
 
   -- refresh the entity status
-  if job.inst ~= nil then
-    self.nv.handled_unums[job.inst.nv.unit_number] = true
-    job.inst:service(true)
+  local function call_service(inst)
+    if inst ~= nil and type(inst.service) == "function" then
+      inst:service(true)
+    end
   end
+  call_service(job.src_inst)
+  call_service(job.dst_inst)
 end
 
 -------------------------------------------------------------------------------
--- this is the TransferTower factory
 
 --[[
   Create the instance for the entity.
@@ -155,15 +234,9 @@ function M.create(nv)
 
   clog("TransferTower: Created %s [%s]", entity.name, self.nv.unit_number)
 
-  -- register myself
-  Globals.tower_add(self)
   return self
 end
-
--- get the instance associated with this unit_number
-function M.get(unit_number)
-  return Globals.tower_get(unit_number)
-end
+-------------------------------------------------------------------------------
 
 Globals.register_handler("name", shared.transfer_tower_name, M.create)
 

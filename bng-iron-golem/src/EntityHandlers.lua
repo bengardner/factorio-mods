@@ -208,7 +208,7 @@ local function storage_can_take_from(inst, request_from_buffers, logistic_mode)
 
   if logistic_mode == "requester" then
     -- a requester cannot take from another requester
-    if mode ~= "requester" then
+    if mode == "requester" then
       return false
     end
     -- a requester cannot take from a buffer unless enabled
@@ -279,13 +279,13 @@ returns chest, count
 
 @logistic_mode is the logistic mode of the taker.
 ]]
-function M.find_chest_items(taker_unum, storage_ents, name, count, request_from_buffers, logistic_mode)
+function M.find_chest_items(dst_unum, storage_ents, name, count, request_from_buffers, logistic_mode)
   local best_chest
   local best_count = 0
 
   for unum, _ in pairs(storage_ents) do
     local inst = Globals.entity_get(unum)
-    if inst ~= nil and inst.nv.unit_number ~= taker_unum and storage_can_take_from(inst, request_from_buffers, logistic_mode) then
+    if inst ~= nil and inst.nv.unit_number ~= dst_unum and storage_can_take_from(inst, request_from_buffers, logistic_mode) then
       local inv = inst.nv.entity.get_output_inventory()
       local n_avail = inv.get_item_count(name)
       if n_avail > 0 then
@@ -384,6 +384,282 @@ function M.find_best_job(service_ents, storage_ents, skip_service)
   -- make the linter happy
   return nil
 end
+
+-------------------------------------------------------------------------------
+
+--[[
+Find space in the logistic network for the items.
+@entity is either a "character" or "roboport" (tower).
+]]
+--@field entity LuaEntity @ character or tower
+--@field name string @ Item name
+--@field count number @ Item count
+function M.find_chest_space2(src_entity, mid_entity, net, name, count)
+  if net == nil then
+    return
+  end
+
+  -- FIXME: does this do partial stacks? Do I need to check for count=1 if this fails?
+  local pt = net.select_drop_point{ stack={ name=name, count=count } }
+  if pt == nil then
+    clog("%s[%s]: %s[%s] NOT drop for %s (%s)",
+      mid_entity.name, mid_entity.unit_number,
+      src_entity.name, src_entity.unit_number,
+      name, count)
+    return
+  end
+  if pt.owner.unit_number == src_entity.unit_number then
+    --pt = net.select_drop_point{ stack={ name=name, count=count }, members="storage" }
+    --if pt == nil then
+      clog("%s[%s] self-drop for %s (%s)", src_entity.name, src_entity.unit_number, name, count)
+      for si, se in ipairs(net.storages) do
+        clog(" %s] %s [%s]", si, se.name, se.unit_number)
+      end
+      return
+    --end
+  end
+--[[
+  clog("%s[%s]: %s[%s] drop %s (%s) into %s[%s]",
+    mid_entity.name, mid_entity.unit_number,
+    src_entity.name, src_entity.unit_number,
+    name, count,
+    pt.owner.name, pt.owner.unit_number)
+]]
+  local sinv
+  if pt.owner.type == "character" then
+    sinv = pt.owner.get_main_inventory()
+  else
+    sinv = pt.owner.get_output_inventory()
+  end
+  if sinv ~= nil then
+    -- get an accurate count
+    count = math.min(count, sinv.get_insertable_count(name))
+    if count > 0 then
+      return Globals.entity_get(pt.owner.unit_number), count
+    end
+  end
+end
+
+--[[
+Find items in the logistic network.
+@entity is either a "character" or "roboport" (tower).
+@logistic_mode is the logistic mode of the taker.
+]]
+function M.find_chest_items2(dst_entity, mid_entity, net, name, count, request_from_buffers)
+  if net == nil then
+    return
+  end
+
+  local pt = net.select_pickup_point{ name=name, position=mid_entity.position, include_buffers=request_from_buffers }
+  if pt == nil or pt.owner == nil then
+    clog("%s[%s]: No pickup for %s (%s) for %s[%s]",
+      mid_entity.name, mid_entity.unit_number,
+      name, count,
+      dst_entity.name, dst_entity.unit_number)
+    return
+  end
+
+  clog("%s[%s]: %s[%s] pickup %s (%s) from %s [%s] rfb=%s",
+    mid_entity.name, mid_entity.unit_number,
+    dst_entity.name, dst_entity.unit_number,
+    name, count,
+    pt.owner.name, pt.owner.unit_number, request_from_buffers)
+
+  local sinv
+  if pt.owner.type == "character" then
+    sinv = pt.owner.get_main_inventory()
+  else
+    sinv = pt.owner.get_output_inventory()
+  end
+  if sinv ~= nil then
+    -- get an accurate count
+    count = math.min(count, sinv.get_item_count(name))
+    return Globals.entity_get(pt.owner.unit_number), count
+  end
+end
+
+function M.find_chest_space3(src_entity, mid_entity, net, name, count, storage_ents)
+  if net == nil then
+    return M.find_chest_space(storage_ents, name, count)
+  end
+  return M.find_chest_space2(src_entity, mid_entity, net, name, count)
+end
+
+function M.find_chest_items3(dst_entity, mid_entity, net, name, count, storage_ents, request_from_buffers)
+  if net == nil then
+    local logistic_mode = "none"
+    local dst_inst = Globals.entity_get(dst_entity.unit_number)
+    if dst_inst ~= nil then
+      logistic_mode = dst_inst.nv.logistic_mode or "none"
+    end
+    return M.find_chest_items(dst_entity.unit_number, storage_ents, name, count, request_from_buffers, logistic_mode)
+  end
+  return M.find_chest_items2(dst_entity, mid_entity, net, name, count, request_from_buffers)
+end
+
+--[[
+This finds a job that transfers between a storage chest and a service entity.
+@entity is either a "character" or "roboport" (tower).
+@service_ents and @storage_ents are tables with key=unit_number and val=(dont't care)
+@service_ents contains the in-range entities that could be serviced.
+@storage_ents contains the in-range storage chest entities.
+
+returns a table with the following:
+  - src : source entity
+  - dst : destination entity
+  - name : name of item
+  - count : count to transfer
+  - chest : the chest involved
+  - inst : the instance involved (to re-run inst:service(true) after the transfer)
+]]
+--@field entity LuaEntity @ Tower
+--@field service_ents table @ Entities that need service, key=unit_number, val=true
+--@field done_unums table @ Entities that have been serviced, key=unit_number, val=true
+function M.tower_find_best_job(entity, service_ents, done_unums)
+  local best_pri = 0
+  local best_chest
+  local best_inst
+  local best_name
+  local best_count
+
+  local net = entity.logistic_network
+  if net == nil then
+    return nil
+  end
+
+  done_unums = done_unums or {}
+
+  for unum, _ in pairs(service_ents) do
+    local inst = Globals.entity_get(unum)
+    local noskip = (done_unums[unum] ~= true)
+    if inst ~= nil and noskip and (inst.nv.priority or 0) > best_pri then
+      --clog(" -- check %s[%s] pri=%s req=%s pro=%s", inst.nv.entity_name, inst.nv.unit_number, inst.nv.priority,
+      --  serpent.line(inst.nv.request), serpent.line(inst.nv.provide))
+      local provide = inst.nv.provide
+      if provide ~= nil and next(provide) ~= nil then
+        for name, count in pairs(provide) do
+          local chest, n_free = M.find_chest_space2(inst.nv.entity, entity, net, name, count)
+          if chest ~= nil then
+            best_pri = inst.nv.priority
+            best_inst = inst
+            best_chest = chest
+            best_name = name
+            best_count = -n_free
+            break
+          end
+        end
+      end
+
+      --[[
+        A requester cannot request from another requester.
+        A requester may request from a buffer if request_from_buffers is set.
+        A buffer may NOT request from a requester or another buffer.
+      ]]
+      if inst.nv.priority > best_pri then
+        local request = inst.nv.request
+        if request ~= nil and next(request) ~= nil then
+          for name, count in pairs(request) do
+            local dst_ent = inst.nv.entity
+            -- logistic chests generally cannot pull from requester
+            local request_from_buffers = true
+            if dst_ent.type == "logistic-container" then
+              -- two type: 'buffer' and 'requester'. 'requester' can pull from 'buffer' if enabled
+              request_from_buffers = false
+              if dst_ent.prototype.logistic_mode == "requester" and dst_ent.request_from_buffers then
+                request_from_buffers = true
+              end
+            end
+
+            local chest, n_avail = M.find_chest_items2(dst_ent, entity, net, name, count, request_from_buffers)
+            if chest ~= nil then
+              best_pri = inst.nv.priority
+              best_inst = inst
+              best_chest = chest
+              best_name = name
+              best_count = n_avail
+            end
+          end
+        end
+      end
+    end
+  end
+
+  if best_chest ~= nil then
+    if best_count < 0 then
+      -- moving from the entity to the chest
+      return { pri=best_pri, dst=best_chest.nv.entity, src=best_inst.nv.entity, inst=best_inst, chest=best_chest, name=best_name, count=-best_count }
+    else
+      -- moving from the chest to the entity
+      return { pri=best_pri, src=best_chest.nv.entity, dst=best_inst.nv.entity, inst=best_inst, chest=best_chest, name=best_name, count=best_count }
+    end
+  end
+  -- make the linter happy
+  return nil
+end
+
+-------------------------------------------------------------------------------
+
+local function chest_get_insertable_count(entity, name)
+  if entity.type == "logistic-storage" then
+    return entity.get_output_inventory().get_insertable_count(name)
+  end
+  return 0
+end
+
+--[[
+Find something that will take the items.
+If net ~= nil, the check the network for requests.
+
+  -- if service_ents ~= nil then try to satisfy a request
+  -- if storage_ents ~= nil then try to find a chest that will take it
+
+@return instance, count
+]]
+function M.find_item_takers(src_entity, mid_entity, net, name, count, service_ents, storage_ents)
+  if net ~= nil then
+    -- this is the usual path when in a logistic network
+    local pt = net.select_drop_point{ stack={ name=name, count=count } }
+    if pt ~= nil and pt.owner.unit_number ~= src_entity.unit_number then
+      local sinv
+      if pt.owner.type == "character" then
+        sinv = pt.owner.get_main_inventory()
+      else
+        sinv = pt.owner.get_output_inventory()
+      end
+      if sinv ~= nil then
+        -- get an accurate count
+        count = math.min(count, sinv.get_insertable_count(name))
+        if count > 0 then
+          return Globals.entity_get(pt.owner.unit_number), count
+        end
+      end
+    end
+  end
+
+  -- no logistic taker, see if there is a request outside the network
+  if type(service_ents) == "table" then
+    for unum, _ in pairs(service_ents) do
+      local inst = Globals.entity_get(unum)
+      if inst ~= nil then
+        local request = inst.nv.request
+        if request ~= nil then
+          -- trusting that an entity won't request what it can't hold
+          local n_trans = math.min(request[name] or 0, count)
+          if n_trans > 0 then
+            return inst, n_trans
+          end
+        end
+      end
+    end
+  end
+
+  -- OK. see if we can shove it in a chest
+  if type(storage_ents) == "table" then
+    return M.find_chest_space(storage_ents, name, count)
+  end
+end
+
+-------------------------------------------------------------------------------
 
 --[[
 Transfers @count items from @src_entity in @src_inv via @mid_entity to @dst_entity in @dst_inv.

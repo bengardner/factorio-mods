@@ -463,29 +463,31 @@ items will fit with a bonus:
 2023.09.16 ----
 
 Fully adopt logistics stuff.
+	- create a "small" chest for each of the 5 chests (done)
 
-requester: (create small entity)
-	- can request items (creates request job)
-	- storage_remove = true  : used as a source for servicing entities
-	- storage_insert = false : will not put stuff in there
+	- bring back the job queue... global
+		- the 'service' function checks if the entity needs anything
+		- add the unit_number to the job_queue if it needs something
 
-buffer : basically same as requester, but has a flag to mark it as a buffer
-	- can request items (creates request job)
-	- storage_remove = true  : used as a source for servicing entities
-		- but NOT from a requester that has 'entity.request_from_buffers = false'
-	- storage_insert = false : will not put stuff in there
+	- tower service
+		- same scan logic -- rescan when an entity is added/removed (ignore storage that doesn't need service?)
+		- step through service_ents
+			- request
+				- pt = select_pickup_point{ name=name, position=tower.position, include_buffers=true/false }
+				- if pt then pt.owner is the source, so see how much we can take
+			- provide
+				- pt = select_drop_point( stack )
+				- if pt then pt.owner is the dest
 
-storage => (create small entity) general dumping ground for items
-	- no jobs created
-	- filter prevents adding items
-	- storage_remove = true : used as a source for servicing entities
-	- storage_insert = true : will not put stuff in there
+	- player Service
+		- scan when stopped for 0.5 seconds -- keep result of the scan as long as within +/- 1 from last scan
+		  - dump trash
+		- step through service_ents
+			- request
+				- pt = select_pickup_point{ name=name, position=tower.position, include_buffers=true/false }
+				- if pt then pt.owner is the source, so see how much we can take
+			- provide
+				- pt = select_drop_point( stack )
+				- if pt then pt.owner is the dest
 
-passive-provider => (create small entity) can take, but not add
-	- storage_remove = true  : used as a source for servicing entities
-	- storage_insert = false : will not put stuff in there
-
-active-provider =>
- 	- creates priority 1 "provide" for stuff after 10 seconds
-	- storage_remove = true  : used as a source for servicing entities
-	- storage_insert = false : will not put stuff in there
+	find_chest_space
