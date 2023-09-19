@@ -452,18 +452,22 @@ function M.find_chest_items2(dst_entity, mid_entity, net, name, count, request_f
 
   local pt = net.select_pickup_point{ name=name, position=mid_entity.position, include_buffers=request_from_buffers }
   if pt == nil or pt.owner == nil then
+    --[[
     clog("%s[%s]: No pickup for %s (%s) for %s[%s]",
       mid_entity.name, mid_entity.unit_number,
       name, count,
       dst_entity.name, dst_entity.unit_number)
+      ]]
     return
   end
 
+  --[[
   clog("%s[%s]: %s[%s] pickup %s (%s) from %s [%s] rfb=%s",
     mid_entity.name, mid_entity.unit_number,
     dst_entity.name, dst_entity.unit_number,
     name, count,
     pt.owner.name, pt.owner.unit_number, request_from_buffers)
+  ]]
 
   local sinv
   if pt.owner.type == "character" then
