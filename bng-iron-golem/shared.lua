@@ -13,8 +13,9 @@ shared.transfer_beam_name = "golem-transfer-beam"
 shared.transfer_tower_name = "logistic-transfer-tower"
 shared.transfer_tower_reach = 40
 -- per transfer
-shared.transfer_tower_power_usage =  5000000
+shared.transfer_tower_power_usage =  500000
 shared.transfer_tower_power_min   = 20000000
+shared.transfer_tower_tick_min = 10
 
 function shared.get_gfx_path(path)
   return string.format("%s/data/%s", shared.mod_path, path)

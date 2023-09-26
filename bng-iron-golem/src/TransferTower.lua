@@ -108,10 +108,14 @@ function TransferTower:find_job()
     local inst = Globals.entity_get(unum)
 
     if inst ~= nil and (handled_unums[unum] ~= true) and (inst.nv.priority or 0) > 0 then
-      for name, count in pairs(inst.nv.provide or {}) do
-        local chest, n_free = EntityHandlers.find_chest_space2(inst.nv.entity, entity, net, name, count)
-        if chest ~= nil then
-          return { src=inst.nv.entity, src_inst=inst, dst=chest.nv.entity, dst_inst=chest, name=name, count=n_free }
+      for name, ii in pairs(inst.nv.provide or {}) do
+        if type(ii) == "number" then
+          ii = { count=ii, idx=1 }
+        end
+        local count = ii.count
+        local dst_inst, n_free, dst_inv = EntityHandlers.logistic_find_space(inst.nv.entity, entity, net, name, count)
+        if dst_inst ~= nil then
+          return { src=inst.nv.entity, src_inv=ii.idx, src_inst=inst, dst=dst_inst.nv.entity, dst_inv=dst_inv, dst_inst=dst_inst, name=name, count=n_free }
         end
       end
 
@@ -120,21 +124,27 @@ function TransferTower:find_job()
         A requester may request from a buffer if request_from_buffers is set.
         A buffer may NOT request from a requester or another buffer.
       ]]
-      for name, count in pairs(inst.nv.request or {}) do
-        local dst_ent = inst.nv.entity
-        -- logistic chests generally cannot pull from requester
-        local request_from_buffers = true
-        if dst_ent.type == "logistic-container" then
-          -- two types: 'buffer' and 'requester'. 'requester' can pull from 'buffer' if enabled, buffers can't.
-          request_from_buffers = false
-          if dst_ent.prototype.logistic_mode == "requester" and dst_ent.request_from_buffers then
-            request_from_buffers = true
+      if not inst.nv.entity.to_be_deconstructed() then
+        for name, ii in pairs(inst.nv.request or {}) do
+          if type(ii) == "number" then
+            ii = { count=ii, idx=1 }
           end
-        end
+          local count = ii.count
+          local dst_ent = inst.nv.entity
+          -- logistic chests generally cannot pull from requester
+          local request_from_buffers = true
+          if dst_ent.type == "logistic-container" then
+            -- two types: 'buffer' and 'requester'. 'requester' can pull from 'buffer' if enabled, buffers can't.
+            request_from_buffers = false
+            if dst_ent.prototype.logistic_mode == "requester" and dst_ent.request_from_buffers then
+              request_from_buffers = true
+            end
+          end
 
-        local chest, n_avail = EntityHandlers.find_chest_items2(dst_ent, entity, net, name, count, request_from_buffers)
-        if chest ~= nil then
-          return { src=chest.nv.entity, src_inst=chest, dst=inst.nv.entity, dst_inst=inst, name=name, count=n_avail }
+          local src_inst, n_avail, src_inv = EntityHandlers.logistic_find_items(dst_ent, entity, net, name, count, request_from_buffers)
+          if src_inst ~= nil then
+            return { src=src_inst.nv.entity, src_inv=src_inv, src_inst=src_inst, dst=dst_ent, dst_inv=ii.idx, dst_inst=inst, name=name, count=n_avail }
+          end
         end
       end
 
@@ -152,8 +162,8 @@ It transfers items within the logistic network.
 function TransferTower:service()
   -- don't process more than 1 Hz
   local elapsed = game.tick - (self.tick_service or 0)
-  if elapsed < 60 then
-    return
+  if elapsed < shared.transfer_tower_tick_min then
+    --return
   end
   self.tick_service = game.tick
 
@@ -189,7 +199,7 @@ function TransferTower:service()
     return
   end
 
-  EntityHandlers.transfer_items(job.src, self.nv.entity, job.dst, job.name, job.count)
+  EntityHandlers.transfer_items(self.nv.entity, job)
   entity.energy = entity.energy - shared.transfer_tower_power_usage
 
   -- refresh the entity status

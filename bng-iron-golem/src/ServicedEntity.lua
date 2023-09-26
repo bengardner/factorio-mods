@@ -1,5 +1,16 @@
 --[[
 Class for a ServicedEntity.
+Scans entities and sets the priority, request and provide fields.
+
+`self.nv.priority` is a number that should reflect the priority of the request.
+We currently don't use that for anything, but the idea was to use a different pool per priority
+so that high priority requests are services faster.
+
+`self.nv.request` is a table with key=item and val=count or { idx=inventory_index, count=count }
+It indicates that is wants a certain number of items in a certain inventory.
+
+`self.nv.provide` is a table with key=item and val=count or { idx=inventory_index, count=count }
+It indicates that is wants to provide a certain number of items in a certain inventory.
 ]]
 local Globals = require('src.Globals')
 local shared = require("shared")
@@ -52,6 +63,28 @@ function ServicedEntity:service(force)
   end
 end
 
+function ServicedEntity:get_priority()
+  return self.nv.priority or 0
+end
+
+function ServicedEntity:up_priority(pri)
+  if pri > self:get_priority() then
+    self.nv.priority = pri
+  end
+end
+
+-- Add an item request. We can only request an item for one inventory at a time
+function ServicedEntity:add_request(inv, item, count, priority)
+  self.nv.request[item] = { idx=inv.index, count=count }
+  self:up_priority(priority)
+end
+
+-- Add an item provide. We can only provide an item for one inventory at a time
+function ServicedEntity:add_provide(inv, item, count, priority)
+  self.nv.provide[item] = { idx=inv.index, count=count }
+  self:up_priority(priority)
+end
+
 -------------------------------------------------------------------------------
 -- Service scanner routines to populate nv.priority, nv.request, nv.profide
 
@@ -61,7 +94,6 @@ Update self.nv.request to include items for the recipe.
 function ServicedEntity:update_recipe_inv(inv, recipe, factor)
   if recipe ~= nil and inv ~= nil then
 
-    local request = self.nv.request
     local contents = inv.get_contents()
     for _, ing in pairs(recipe.ingredients) do
       local prot = game.item_prototypes[ing.name]
@@ -69,8 +101,7 @@ function ServicedEntity:update_recipe_inv(inv, recipe, factor)
         local n_have = contents[ing.name] or 0
         local n_need = math.max(ing.amount, math.max(ing.amount * factor, prot.stack_size))
         if n_have < n_need then
-          request[ing.name] = (request[ing.name] or 0) + (n_need - n_have)
-          self.nv.priority = 2
+          self:add_request(inv, ing.name, n_need - n_have, 2)
         end
       end
     end
@@ -82,31 +113,36 @@ Update self.nv.provide to the current inventory.
 REVISIT: could just do: self.nv.provide = inv.get_contents()
 ]]
 function ServicedEntity:update_remove_all(inv)
-  local provide = self.nv.provide
   if inv ~= nil then
-    for name, count in pairs(inv.get_contents()) do
-      provide[name] = (provide[name] or 0) + count
-      self.nv.priority = 1
-    end
+    local pri = 1
     if inv.is_full() then
-      self.nv.priority = 2
+      pri = 2
+    end
+    for name, count in pairs(inv.get_contents()) do
+      self:add_provide(inv, name, count, pri)
     end
   end
 end
 
-local fuel_list = { "solid-fuel", "coal", "wood" }
+--local fuel_list = { "solid-fuel", "coal", "wood" }
 
 function ServicedEntity:update_refuel()
   -- we only do coal for now
   local fuel_name = "coal"
   local prot = game.item_prototypes[fuel_name]
+  local pri = 1
+  local hi_pri = 2
+
+  -- We really don't want to lose power
+  if self.nv.entity.type == "boiler" then
+    hi_pri = 3
+  end
 
   local inv = self.nv.entity.get_fuel_inventory()
   if inv ~= nil then
     -- if empty, request coal
     if inv.is_empty() then
-      self:up_priority(2)
-      self.nv.request[fuel_name] = #inv * prot.stack_size
+      self:add_request(inv, fuel_name, #inv * prot.stack_size, hi_pri)
       return
     end
 
@@ -117,12 +153,10 @@ function ServicedEntity:update_refuel()
         local n_need = inv.get_insertable_count(fuel)
         -- start requesting when fuel is below 1/2 stack
         if n_need > fuel_prot.stack_size / 2 then
-          self.nv.request[fuel] = n_need
           if n_need > fuel_prot.stack_size - 3 then
-            self:up_priority(2)
-          else
-            self:up_priority(1)
+            pri = hi_pri
           end
+          self:add_request(inv, fuel, n_need, pri)
         end
       end
     end
@@ -145,8 +179,9 @@ function ServicedEntity:scan_furnace()
   end
 
   local inv_out = entity.get_output_inventory()
-  if inv_out ~= nil and inv_out.get_item_count() > 10 then
-    self:update_remove_all(entity.get_output_inventory())
+  -- can have full_output with 1 item if the recipe changed
+  if inv_out ~= nil and (inv_out.get_item_count() > 10 or entity.status == defines.entity_status.full_output) then
+    self:update_remove_all(inv_out)
   end
 end
 
@@ -174,9 +209,6 @@ function ServicedEntity:scan_burner_mining_drill()
     return
   end
 
-  local provide = self.nv.provide
-  local request = self.nv.request
-
   -- We are on coal (special case mining circle)
   local fuel_name = "coal"
   local fuel_target = 5
@@ -187,11 +219,9 @@ function ServicedEntity:scan_burner_mining_drill()
     local fuel_max = math.ceil(prot.stack_size / 2)
     local fuel_count = finv.get_item_count(fuel_name)
     if fuel_count == 0 then
-      request[fuel_name] = fuel_target
-      self.nv.priority = 2
+      self:add_request(finv, fuel_name, fuel_target, 2)
     elseif fuel_count > fuel_max then
-      provide[fuel_name] = fuel_count - (fuel_target + 1)
-      self.nv.priority = 1
+      self:add_provide(finv, fuel_name, fuel_count - (fuel_target + 1), 1)
     end
   end
 end
@@ -216,7 +246,6 @@ end
 -- logistic requester/buffer, create a request for missing items
 function ServicedEntity:scan_container_requester()
   local entity = self.nv.entity
-  local request = self.nv.request
 
   if entity.request_slot_count > 0 then
     local inv = entity.get_output_inventory()
@@ -228,8 +257,7 @@ function ServicedEntity:scan_container_requester()
         local n_trans = math.min(n_free, req.count - n_have)
         if n_trans > 0 then
           --clog("%s[%s] has req for %s(%s), n_free=%s", entity.name, entity.unit_number, req.name, req.count, n_free)
-          request[req.name] = n_trans
-          self.nv.priority = 1
+          self:add_request(inv, req.name, n_trans, 1)
         end
       end
     end
@@ -254,17 +282,6 @@ end
 function ServicedEntity:scan_refuel()
   self:update_refuel()
 end
-
-function ServicedEntity:get_priority()
-  return self.nv.priority or 0
-end
-
-function ServicedEntity:up_priority(pri)
-  if pri > self:get_priority() then
-    self.nv.priority = pri
-  end
-end
-
 
 -------------------------------------------------------------------------------
 -- this is the ServicedEntity factory

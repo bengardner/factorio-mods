@@ -3,39 +3,29 @@ Attaches to the events to register and remove entities.
 ]]
 local Event = require('__stdlib__/stdlib/event/event')
 local Globals = require('src.Globals')
-local clog = require("src.log_console").log
---local shared = require("shared")
---local Golem = require("src.Golem")
---local GolemUI = require("src.GolemUI")
---local GolemChar = require("src.GolemChar")
+--local clog = require("src.log_console").log
 local Player = require("src.Player")
---local TransferTower = require "src.TransferTower"
 
 local M = {}
 
 --- handles all events that add an entity
 function M.on_entity_add(event)
   local entity = event.created_entity or event.entity or event.destination
-  if entity == nil or not entity.valid then
-    return
+  if entity ~= nil and entity.valid then
+    Globals.entity_add(entity)
   end
-
-  -- entity_add checks for a handler and creates the instance
-  --local inst =
-  Globals.entity_add(entity)
-  --if inst ~= nil then
-  --  clog("Added %s @ (%s,%s)", entity.name, entity.position.x, entity.position.y)
-  --end
 end
 
 --- handles all events that remove an entity
 function M.on_entity_remove(event)
-  local entity = event.created_entity or event.entity or event.destination
-  if entity == nil or not entity.valid or entity.unit_number == nil then
-    return
+  local entity = event.entity
+  if entity ~= nil and entity.valid and entity.unit_number ~= nil then
+    Globals.entity_remove(entity.unit_number)
   end
-
-  Globals.entity_remove(entity.unit_number)
+  local unit_number = event.unit_number
+  if unit_number ~= nil then
+    Globals.entity_remove(unit_number)
+  end
 end
 
 -- service one entity per tick
@@ -46,10 +36,8 @@ function M.on_tick(event)
   -- service_queue_pop() checks entity.valid and removes invalid entities
   local inst = Globals.service_queue_pop()
   if inst ~= nil then
-    -- wouldn't be on the service queue without 'service'... but...
+    -- wouldn't be on the service queue without 'service', but we check anyway.
     if type(inst.service) == "function" then
-      --local entity = inst.nv.entity
-      --clog("calling handler for %s @ (%s,%s)", entity.name, entity.position.x, entity.position.y)
       inst:service()
       -- if the entity survived the handler, then we add it to the queue again
       if inst:IsValid() then
@@ -58,7 +46,8 @@ function M.on_tick(event)
     end
   end
 
-  if game.tick % 10 == 5 then
+  -- players/characters are serviced at 6 Hz
+  if game.tick % 10 == 0 then
     for player_index, player in pairs(game.players) do
       if player.character ~= nil then
         local pi = Globals.get_player_info(player_index)
@@ -70,21 +59,6 @@ function M.on_tick(event)
     end
   end
 end
-
---[[
-function M.open_golem_gui(event)
-  local player = game.players[event.player_index]
-  if player ~= nil and player.selected ~= nil then
-    local entity = player.selected
-    if entity.name == shared.golem_name then
-      local golem = Golem.get(entity.unit_number)
-      if golem ~= nil then
-        GolemUI.create(event.player_index, golem)
-      end
-    end
-  end
-end
-]]
 
 Event.on_event({
     defines.events.on_built_entity,
@@ -101,18 +75,13 @@ Event.on_event({
     defines.events.on_robot_mined_entity,
     defines.events.script_raised_destroy,
     defines.events.on_entity_died,
-    defines.events.on_marked_for_deconstruction,
     defines.events.on_post_entity_died,
   },
   M.on_entity_remove
 )
 
 Event.on_nth_tick(1, M.on_tick)
-
 Event.on_init(Globals.setup)
-
--- Event.on_event("golem-open-gui", M.open_golem_gui)
-
 Event.on_load(Globals.restore_metatables)
 
 return M

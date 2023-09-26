@@ -475,10 +475,10 @@ function M.scan_prototypes()
       if prot.burner_prototype ~= nil and prot.burner_prototype.fuel_categories.chemical == true then
         M.add_entity_name_type(prot.name, not prot.is_building, false)
       elseif prot.is_building then
-        if prot.type == "assembling-machine" then
-          M.add_entity_name_type(prot.name, false, false)
-        elseif prot.type == "logistic-container" then
+        if prot.type == "logistic-container" then
           M.add_entity_name_type(prot.name, false, true)
+        --elseif prot.type == "assembling-machine" then
+        --  M.add_entity_name_type(prot.name, false, false)
         end
         -- REVISIT: should electric-furnace be included? I think not.
       end
