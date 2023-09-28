@@ -196,7 +196,10 @@ function TransferTower:service()
   local job = self:find_job()
   if job == nil then
     self.nv.handled_unums = {}
-    return
+    job = self:find_job()
+    if job == nil then
+      return
+    end
   end
 
   EntityHandlers.transfer_items(self.nv.entity, job)
@@ -235,10 +238,8 @@ function M.create(nv)
   end
 
   local self = {
-    __class = "TransferTower",
+    __class = "TransferTower", -- for debug
     nv = nv,
-
-    localised_name = { shared.transfer_tower_name },
   }
   setmetatable(self, TransferTower_Meta)
 
