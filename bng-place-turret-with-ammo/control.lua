@@ -21,9 +21,11 @@ local function take_player_inventory(inv, min_count, max_count)
   return nil
 end
 
-local function on_built_entity(event)
-  local player = game.players[event.player_index]
-  if player == nil then
+local function handle_turret(player, entity)
+  if player == nil or player.object_name ~= "LuaPlayer" then
+    return
+  end
+  if entity == nil or not entity.valid then
     return
   end
   local player_inv = player.get_main_inventory()
@@ -31,12 +33,6 @@ local function on_built_entity(event)
     return
   end
 
-  local entity = event.created_entity
-  if entity == nil or not entity.valid then
-    return
-  end
-
-  -- TODO: detect other turret types? Embedded turrets? (car, tank, heli)
   if entity.name == "gun-turret" then
     local inv = entity.get_inventory(defines.inventory.turret_ammo)
     if inv ~= nil then
@@ -48,8 +44,28 @@ local function on_built_entity(event)
   end
 end
 
+-- pull ammo from the player that placed the turret
+local function on_built_entity(event)
+  handle_turret(game.players[event.player_index], event.created_entity)
+end
+
+-- pull ammo from the logistic network (if any)
+local function on_robot_built_entity(event)
+  local entity = event.created_entity
+  if entity == nil or not entity.valid then
+    return
+  end
+  handle_turret(entity.last_user, entity)
+end
+
 script.on_event(
   defines.events.on_built_entity,
   on_built_entity,
+  {{ filter = "turret" }}
+)
+
+script.on_event(
+    defines.events.on_robot_built_entity,
+  on_robot_built_entity,
   {{ filter = "turret" }}
 )
