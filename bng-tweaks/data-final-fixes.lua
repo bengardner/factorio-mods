@@ -28,11 +28,11 @@ data.raw["energy-shield-equipment"]["energy-shield-mk2-equipment"].energy_per_sh
 
 data.raw["ammo"]["cannon-shell"].ammo_type.action.action_delivery.max_range = 60
 
-
 data.raw["gun"]["spidertron-rocket-launcher-1"].attack_parameters.range = 90
 data.raw["gun"]["spidertron-rocket-launcher-2"].attack_parameters.range = 90
 data.raw["gun"]["spidertron-rocket-launcher-3"].attack_parameters.range = 90
 data.raw["gun"]["spidertron-rocket-launcher-4"].attack_parameters.range = 90
+
 data.raw["gun"]["artillery-wagon-cannon"].attack_parameters.range = 500
 
 data.raw["electric-turret"]["laser-turret"].attack_parameters.range = 42
@@ -43,5 +43,11 @@ do
   local lr = data.raw["logistic-robot"]["logistic-robot"]
   lr.energy_per_move = "0.05kJ"
   lr.max_payload_size = 100
-  lr.speed = 0.1
+  lr.speed = 0.3
+
+  local cr = data.raw["construction-robot"]["construction-robot"]
+  cr.energy_per_move = "0.05kJ"
+  cr.max_payload_size = 100
+  cr.speed = 0.3
+
 end

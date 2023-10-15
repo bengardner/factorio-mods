@@ -4,7 +4,7 @@
   "title": "BNG Tweaks",
   "author": "bng",
   "homepage": "https://github.com/bengardner/factorio-mods",
-  "factorio_version": "1.1"
+  "factorio_version": "1.1",
   "dependencies": ["base>=1.1.0"],
-  "description": "Personal tweaks to make the game easier.",
+  "description": "Personal tweaks to make the game easier."
 }
