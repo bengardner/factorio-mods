@@ -28,4 +28,19 @@ function M.entity_table()
   return global.entities
 end
 
+function M.get_science_packs(force_scan)
+  local pp = global.science_packs or {}
+  if next(pp) == nil or force_scan then
+    -- scans prototypes and updates the list of science packs
+    for k, v in pairs(game.item_prototypes) do
+      if v.type == 'tool' and string.find(k, 'science%-pack') ~= nil then
+        print('Science Pack:', k)
+        pp[k] = 50 -- TODO: configurable?
+      end
+    end
+    global.science_packs = pp
+  end
+  return global.science_packs
+end
+
 return M

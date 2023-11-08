@@ -26,7 +26,7 @@ local function entity_removed(event)
   end
 end
 
-local function update_research_chest(entity)
+local function update_research_chest(entity, science_packs)
   local inv = entity.get_output_inventory()
 
   if entity.to_be_deconstructed() then
@@ -37,7 +37,7 @@ local function update_research_chest(entity)
   local contents = inv.get_contents()
   local force = entity.force
 
-  for item_name, item_count in pairs(constants.SCIENCE_PACKS) do
+  for item_name, item_count in pairs(science_packs) do
     local tech = force.technologies[item_name]
     if tech == nil or tech.researched then
       local cur_count = contents[item_name] or 0
@@ -53,10 +53,12 @@ end
 
 -- Calls update_research_chest() on each valid chest. Removes invalid chests.
 local function service_entities()
+  local sp = GlobalState.get_science_packs(false)
+
   local to_del = {}
   for unum, entity in pairs(GlobalState.entity_table()) do
     if entity.valid then
-      update_research_chest(entity)
+      update_research_chest(entity, sp)
     else
       table.insert(to_del, unum)
     end
@@ -65,6 +67,11 @@ local function service_entities()
   for _, unum in ipairs(to_del) do
     GlobalState.entity_unregister(unum)
   end
+end
+
+local function update_configuration(event)
+  print("Magic Science Pack Chest: rescan")
+  GlobalState.get_science_packs(true)
 end
 
 lib.events =
@@ -83,7 +90,10 @@ lib.events =
   [defines.events.on_post_entity_died] = entity_removed,
 }
 
+lib.on_configuration_changed = update_configuration
+
 lib.on_nth_tick = {
+  -- refill chests every 2 seconds
   [120] = service_entities,
 }
 
