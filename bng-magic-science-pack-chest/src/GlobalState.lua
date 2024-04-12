@@ -1,13 +1,10 @@
+local constants = require 'src.constants'
+
 local M = {}
 
 function M.setup()
   if global.entities == nil then
-    if global.mod ~= nil and global.mod.entities ~= nil then
-      global.entities = global.mod.entities
-      global.mod = nil
-    else
-      global.entities = {}
-    end
+    global.entities = {}
   end
 end
 
@@ -19,8 +16,9 @@ function M.entity_register(entity)
 end
 
 function M.entity_unregister(unit_number)
-  M.setup()
-  global.entities[unit_number] = nil
+  if global.entities ~= nil then
+    global.entities[unit_number] = nil
+  end
 end
 
 function M.entity_table()
@@ -29,16 +27,27 @@ function M.entity_table()
 end
 
 function M.get_science_packs(force_scan)
+  -- scan prototypes for science-packs, going backwards from labs
+
   local pp = global.science_packs or {}
   if next(pp) == nil or force_scan then
-    -- scans prototypes and updates the list of science packs
-    for k, v in pairs(game.item_prototypes) do
-      if v.type == 'tool' and string.find(k, 'science%-pack') ~= nil then
-        print('Science Pack:', k)
-        pp[k] = 50 -- TODO: configurable?
+
+    -- scan lab prototypes and update the list of science packs
+    for k, ep in pairs(game.entity_prototypes) do
+      if ep.type == "lab" then
+        for _, item_name in ipairs(ep.lab_inputs) do
+          local ip = game.item_prototypes[item_name]
+          if ip ~= nil then
+            pp[item_name] = ip.stack_size
+          end
+        end
       end
     end
+
     global.science_packs = pp
+    for name, cnt in pairs(global.science_packs) do
+      print(string.format('Magic Science Pack: %s %s', name, cnt))
+    end
   end
   return global.science_packs
 end

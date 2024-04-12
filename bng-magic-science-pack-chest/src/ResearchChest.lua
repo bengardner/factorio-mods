@@ -51,21 +51,38 @@ local function update_research_chest(entity, science_packs)
   end
 end
 
+local function filter_science_packs(force, science_packs)
+  local available = {}
+  local ips = force.item_production_statistics
+
+  -- assuming the tech is named the same as the science_pack
+  for item_name, item_count in pairs(science_packs) do
+    local tech = force.technologies[item_name]
+    if tech == nil or tech.researched then
+      available[item_name] = math.min(item_count, ips.get_input_count(item_name))
+    end
+  end
+  return available
+end
+
 -- Calls update_research_chest() on each valid chest. Removes invalid chests.
 local function service_entities()
   local sp = GlobalState.get_science_packs(false)
 
-  local to_del = {}
+  -- build the research pack list once per force per service
+  local force_cache = {} -- key=force, val=researched science packs
+
   for unum, entity in pairs(GlobalState.entity_table()) do
     if entity.valid then
-      update_research_chest(entity, sp)
+      local available = force_cache[entity.force_index]
+      if available == nil then
+        available = filter_science_packs(entity.force, sp)
+        force_cache[entity.force_index] = available
+      end
+      update_research_chest(entity, available)
     else
-      table.insert(to_del, unum)
+      GlobalState.entity_unregister(unum)
     end
-  end
-
-  for _, unum in ipairs(to_del) do
-    GlobalState.entity_unregister(unum)
   end
 end
 
@@ -81,6 +98,7 @@ lib.events =
   [defines.events.script_raised_revive] = entity_added,
   [defines.events.script_raised_built] = entity_added,
   [defines.events.on_entity_cloned] = entity_added,
+  [defines.events.on_cancelled_deconstruction] = entity_added,
 
   [defines.events.on_pre_player_mined_item] = entity_removed,
   [defines.events.on_robot_mined_entity] = entity_removed,
