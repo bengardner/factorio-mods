@@ -13,7 +13,7 @@ entity.picture = {
   scale = 0.5,
 }
 entity.minable.result = name
-entity.inventory_size = 19
+entity.inventory_size = 39
 
 
 local item = table.deepcopy(data.raw["item"][source_item_name])
