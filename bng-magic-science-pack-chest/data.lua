@@ -1,1 +1,1 @@
-require "prototypes.magic-science-pack-chest"
+require "prototypes/magic-science-chest"
