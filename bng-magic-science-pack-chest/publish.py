@@ -11,6 +11,7 @@ exclude = {
 	"*.py",
 	"*.xcf",
   "Makefile",
+  ".git*",
 	}
 
 def makedirs(dn):
