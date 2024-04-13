@@ -10,6 +10,7 @@ import shutil
 exclude = {
 	"*.py",
 	"*.xcf",
+  "Makefile",
 	}
 
 def makedirs(dn):
