@@ -26,40 +26,44 @@ local function entity_removed(event)
   end
 end
 
+--[[
+Add the science packs to the chest.
+]]
 local function update_research_chest(entity, science_packs)
   local inv = entity.get_output_inventory()
 
+  -- don't add items if marked for deconstruction
   if entity.to_be_deconstructed() then
     inv.clear()
     return
   end
 
   local contents = inv.get_contents()
-  local force = entity.force
-
   for item_name, item_count in pairs(science_packs) do
-    local tech = force.technologies[item_name]
-    if tech == nil or tech.researched then
-      local cur_count = contents[item_name] or 0
-      if cur_count < item_count then
-        inv.insert({
-          name = item_name,
-          count = item_count - cur_count,
-        })
-      end
+    local cur_count = contents[item_name] or 0
+    if cur_count < item_count then
+      inv.insert({
+        name = item_name,
+        count = item_count - cur_count,
+      })
     end
   end
 end
 
+--[[
+Filter the complete list of science_packs to which ones the force
+has researched and produced.
+This is done once per force per update cycle.
+]]
 local function filter_science_packs(force, science_packs)
   local available = {}
   local ips = force.item_production_statistics
 
-  -- assuming the tech is named the same as the science_pack
-  for item_name, item_count in pairs(science_packs) do
+  -- NOTE: I am assuming the tech is named the same as the science_pack
+  for item_name, stack_size in pairs(science_packs) do
     local tech = force.technologies[item_name]
     if tech == nil or tech.researched then
-      available[item_name] = math.min(item_count, ips.get_input_count(item_name))
+      available[item_name] = math.min(stack_size, ips.get_input_count(item_name))
     end
   end
   return available
@@ -70,7 +74,7 @@ local function service_entities()
   local sp = GlobalState.get_science_packs(false)
 
   -- build the research pack list once per force per service
-  local force_cache = {} -- key=force, val=researched science packs
+  local force_cache = {} -- key=force, val={researched science packs, amount}
 
   for unum, entity in pairs(GlobalState.entity_table()) do
     if entity.valid then
@@ -86,6 +90,7 @@ local function service_entities()
   end
 end
 
+-- this is called at startup when any mod changes
 local function update_configuration(event)
   print("Magic Science Pack Chest: rescan")
   GlobalState.get_science_packs(true)
@@ -100,6 +105,7 @@ lib.events =
   [defines.events.on_entity_cloned] = entity_added,
   [defines.events.on_cancelled_deconstruction] = entity_added,
 
+  -- need these to discard inventory
   [defines.events.on_pre_player_mined_item] = entity_removed,
   [defines.events.on_robot_mined_entity] = entity_removed,
   [defines.events.script_raised_destroy] = entity_removed,

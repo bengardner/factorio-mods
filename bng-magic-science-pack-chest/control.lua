@@ -1,4 +1,4 @@
--- event_handler is "" __core__/lualib/event_handler.lua"
-local handler = require("event_handler")
+-- event_handler is "__core__/lualib/event_handler.lua"
+local event_handler = require("event_handler")
 
-handler.add_lib(require("src.ResearchChest"))
+event_handler.add_lib(require("src.ResearchChest"))
